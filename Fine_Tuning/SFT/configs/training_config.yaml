@@ -1,0 +1,80 @@
+# ============================================================
+# SFT Fine-tuning Configuration
+# Model : unsloth/Qwen2.5-Coder-3B-Instruct
+# Dataset: nickrosh/Evol-Instruct-Code-80k-v1
+# ============================================================
+
+model:
+  name: "unsloth/Qwen2.5-Coder-3B-Instruct"
+  max_seq_length: 2048
+  dtype: null          # null = auto-detect (bfloat16 trên Ampere+)
+  load_in_4bit: true
+
+lora:
+  r: 32
+  # FIX: alpha = 2*r để scaling factor đủ lớn khi update
+  lora_alpha: 64
+  lora_dropout: 0.05
+  bias: "none"
+  use_gradient_checkpointing: "unsloth"
+  random_state: 42
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+data:
+  dataset_name: "nickrosh/Evol-Instruct-Code-80k-v1"
+  test_size: 0.1
+  seed: 42
+  eval_sample_size: 200
+  # FIX: system_prompt phải nhất quán giữa train và inference
+  system_prompt: "You are a helpful, respectful and honest code assistant. Always answer as helpfully as possible."
+
+training:
+  output_dir: "outputs"
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 4
+  # FIX: max_steps=200 chỉ cover ~2.2% data → dùng num_train_epochs=1 thay thế
+  num_train_epochs: 1
+  # max_steps: -1       # uncomment và set số cụ thể nếu cần giới hạn
+  warmup_ratio: 0.05   # tự scale theo dataset size, không hardcode warmup_steps
+  learning_rate: 2.0e-4
+  fp16: true
+  optim: "adamw_8bit"
+  weight_decay: 0.05
+  lr_scheduler_type: "cosine"
+  logging_steps: 10
+  eval_strategy: "steps"
+  eval_steps: 200
+  save_strategy: "steps"
+  save_steps: 200
+  save_total_limit: 3
+  load_best_model_at_end: true
+  # FIX: dùng eval_loss thay vì token_accuracy
+  metric_for_best_model: "eval_loss"
+  greater_is_better: false
+  prediction_loss_only: true
+  packing: true
+  report_to: "none"    # đổi thành "wandb" nếu muốn track experiment
+
+early_stopping:
+  enabled: true
+  patience: 3
+  threshold: 0.001
+
+inference:
+  max_new_tokens: 512
+  temperature: 0.2
+  top_p: 0.9
+  num_test_samples: 3
+
+paths:
+  final_model_dir: "final_lora_model"
+  merged_model_dir: "final_merged_model"
+  log_file: "logs/training.log"

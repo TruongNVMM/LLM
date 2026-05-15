@@ -1,0 +1,23 @@
+# Core
+torch>=2.1.0
+transformers>=4.40.0
+accelerate>=0.29.0
+bitsandbytes>=0.43.0
+peft>=0.10.0
+trl>=0.8.6
+datasets>=2.18.0
+sentencepiece>=0.2.0
+xformers
+
+# Unsloth (cài theo hướng dẫn chính thức, không qua pip thông thường)
+# https://github.com/unslothai/unsloth#installation
+unsloth
+unsloth_zoo
+
+# Evaluation
+codebleu>=0.6.0         # CodeBLEU metric
+human-eval              # HumanEval Pass@k (optional)
+
+# Utilities
+pyyaml>=6.0
+numpy>=1.24.0
