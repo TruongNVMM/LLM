@@ -88,13 +88,12 @@ python scripts/evaluate.py --benchmark humaneval --pass_k 1
 
 ---
 
-## Model Evaluation Roadmap
+## Benchmark Results
 
-| Stage | Metric | Used in |
-|-------|--------|---------|
-| During training | `eval_loss` | Automatically calculated by `SFTTrainer` |
-| After training (fast) | `CodeBLEU` | `scripts/evaluate.py --benchmark codebleu` |
-| After training (standard) | `Pass@1` on HumanEval | `scripts/evaluate.py --benchmark humaneval` |
+| Benchmark | Pass@1 |
+|-----------|--------|
+| HumanEval | 0.73 |
+| HumanEval+ | 0.65 |
 
 ---
 Due to limited resources and the lack of a powerful GPU such as an RTX 3090, this project had to be trained on Google Colab
