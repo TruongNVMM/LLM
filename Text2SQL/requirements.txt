@@ -3,3 +3,5 @@ pandas
 matplotlib 
 openpyxl
 google-genai
+snowflake-connector-python 
+python-dotenv

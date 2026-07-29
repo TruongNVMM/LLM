@@ -1,0 +1,98 @@
+# =============================================================================
+#  GRPO Fine-Tuning Configuration
+#  Evol-Instruct-Code-80k-v1  ×  Unsloth + TRL
+# =============================================================================
+
+# ─────────────────────────────────────────────
+# MODEL
+# ─────────────────────────────────────────────
+model:
+  # Đường dẫn tới SFT model đã fine-tune trước đó
+  # Thay bằng đường dẫn thực tế trên máy / Google Drive của bạn
+  sft_model_dir: "/content/drive/MyDrive/Data Science Projects/NLP_Project/LLMs/GRPO/model"
+  max_seq_length: 2048
+  dtype: null          # null = auto-detect (bfloat16 trên Ampere+, float16 trên T4)
+  load_in_4bit: true   # 4-bit quantization để tiết kiệm VRAM
+
+# ─────────────────────────────────────────────
+# LORA ADAPTER
+# ─────────────────────────────────────────────
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0    # GRPO thường dùng 0 dropout
+  bias: "none"
+  use_gradient_checkpointing: "unsloth"
+  random_state: 42
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# ─────────────────────────────────────────────
+# DATASET
+# ─────────────────────────────────────────────
+dataset:
+  name: "nickrosh/Evol-Instruct-Code-80k-v1"
+  split: "train"
+  test_size: 0.1
+  seed: 42
+  system_prompt: >
+    You are a helpful, respectful and honest code assistant.
+    Always answer as helpfully as possible.
+
+# ─────────────────────────────────────────────
+# GRPO TRAINING
+# ─────────────────────────────────────────────
+training:
+  output_dir: "/content/drive/MyDrive/Data Science Projects/NLP_Project/LLMs/GRPO/outputs_grpo"
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  num_generations: 4           # Số responses sinh ra mỗi prompt để GRPO so sánh
+  max_completion_length: 512
+  max_prompt_length: 512
+  learning_rate: 5.0e-6
+  warmup_ratio: 0.05
+  lr_scheduler_type: "cosine"
+  optim: "adamw_8bit"
+  logging_steps: 10
+  save_steps: 20
+  save_total_limit: 2
+  report_to: "none"            # "wandb" nếu muốn log lên Weights & Biases
+
+# ─────────────────────────────────────────────
+# REWARD WEIGHTS
+# ─────────────────────────────────────────────
+rewards:
+  weights:
+    executable: 0.40      # Mục tiêu chính: code chạy được
+    syntax: 0.25          # Tiền đề của executable
+    no_placeholder: 0.20  # Chống gian lận (pass, TODO, ...)
+    format: 0.10          # Định dạng markdown code block
+    length: 0.05          # Độ dài hợp lý
+  execution_timeout: 5    # Giây — tránh infinite loop
+
+# ─────────────────────────────────────────────
+# VALIDATION CALLBACK & EARLY STOPPING
+# ─────────────────────────────────────────────
+callback:
+  num_samples: 50          # Số mẫu dùng để eval mỗi lần (~3 phút T4)
+  eval_steps: 100          # Eval mỗi N steps
+  patience: 3              # Dừng nếu N lần eval liên tiếp không cải thiện
+  min_delta: 0.005         # Ngưỡng cải thiện tối thiểu
+  monitor: "val/mean_reward"
+  save_best: true
+  best_model_dir: "best_grpo_checkpoint"
+
+# ─────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────
+export:
+  best_model_dir: "best_grpo_checkpoint"
+  output_dir: ""           # Để trống = lưu tại thư mục hiện tại
+  save_method: "merged_16bit"

@@ -1,0 +1,18 @@
+# Core training
+unsloth
+unsloth_zoo
+trl>=0.10.0
+transformers>=4.40.0
+accelerate>=0.28.0
+bitsandbytes>=0.43.0
+peft>=0.10.0
+
+# Dataset
+datasets>=2.18.0
+
+# Optional (performance)
+xformers
+sentencepiece
+
+# Config & utilities
+PyYAML>=6.0

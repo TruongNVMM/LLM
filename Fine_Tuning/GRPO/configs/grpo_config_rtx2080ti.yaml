@@ -1,0 +1,95 @@
+# =============================================================================
+#  GRPO Configuration — Optimized for RTX 2080 Ti (11GB VRAM)
+# =============================================================================
+
+# ─────────────────────────────────────────────
+# MODEL
+# ─────────────────────────────────────────────
+model:
+  sft_model_dir: "./model"     # Thay bằng đường dẫn tới SFT model của bạn
+  max_seq_length: 1024         # Giảm từ 2048 xuống 1024 để tiết kiệm VRAM KV cache
+  dtype: "float16"             # LƯU Ý: RTX 2080 Ti (Turing) KHÔNG hỗ trợ bfloat16 phần cứng, phải dùng float16
+  load_in_4bit: true           # BẮT BUỘC: Nạp 4-bit QLoRA để model 7B/8B chỉ chiếm ~4.5GB VRAM
+
+# ─────────────────────────────────────────────
+# LORA ADAPTER
+# ─────────────────────────────────────────────
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0            # GRPO khuyên dùng 0 dropout
+  bias: "none"
+  use_gradient_checkpointing: "unsloth" # Gradient checkpointing để tiết kiệm bộ nhớ khi backward
+  random_state: 42
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# ─────────────────────────────────────────────
+# DATASET
+# ─────────────────────────────────────────────
+dataset:
+  name: "nickrosh/Evol-Instruct-Code-80k-v1"
+  split: "train"
+  test_size: 0.1
+  seed: 42
+  system_prompt: >
+    You are a helpful, respectful and honest code assistant.
+    Always answer as helpfully as possible.
+
+# ─────────────────────────────────────────────
+# GRPO TRAINING (Tối ưu riêng cho 11GB VRAM)
+# ─────────────────────────────────────────────
+training:
+  output_dir: "./outputs_grpo"
+  num_train_epochs: 1
+  per_device_train_batch_size: 1      # GIẢM xuống 1: GRPO sinh num_generations cho mỗi sample
+  gradient_accumulation_steps: 16     # TĂNG lên 16: Giữ effective batch size = 1 * 16 = 16
+  num_generations: 2                  # GIẢM xuống 2 (hoặc 4 nếu code ngắn) để tránh OOM khi generate
+  max_prompt_length: 256              # Giảm độ dài prompt tối đa
+  max_completion_length: 256          # Giảm độ dài response tối đa
+  learning_rate: 5.0e-6
+  warmup_ratio: 0.05
+  lr_scheduler_type: "cosine"
+  optim: "adamw_8bit"                 # Optimizer 8-bit tiết kiệm VRAM
+  logging_steps: 5
+  save_steps: 20
+  save_total_limit: 2
+  report_to: "none"
+
+# ─────────────────────────────────────────────
+# REWARD WEIGHTS
+# ─────────────────────────────────────────────
+rewards:
+  weights:
+    executable: 0.40
+    syntax: 0.25
+    no_placeholder: 0.20
+    format: 0.10
+    length: 0.05
+  execution_timeout: 5
+
+# ─────────────────────────────────────────────
+# VALIDATION CALLBACK & EARLY STOPPING
+# ─────────────────────────────────────────────
+callback:
+  num_samples: 20                     # Giảm mẫu eval để chạy nhanh hơn trên GPU cá nhân
+  eval_steps: 50
+  patience: 3
+  min_delta: 0.005
+  monitor: "val/mean_reward"
+  save_best: true
+  best_model_dir: "best_grpo_checkpoint"
+
+# ─────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────
+export:
+  best_model_dir: "best_grpo_checkpoint"
+  output_dir: "./exported_model"
+  save_method: "merged_16bit"

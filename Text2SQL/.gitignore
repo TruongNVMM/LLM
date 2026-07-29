@@ -2,3 +2,6 @@
 .venv/
 __pycache__/
 *.pyc
+keys/*.p8
+keys/*.pem
+keys/*.key
