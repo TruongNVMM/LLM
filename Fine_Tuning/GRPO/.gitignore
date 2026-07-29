@@ -8,13 +8,14 @@ __pycache__/
 venv/
 env/
 ENV/
+.cache/
 
 # Jupyter / IPython
 .ipynb_checkpoints/
 
 # Environment files
-.env
-.env.*
+.venv
+.venv.*
 
 # Logs
 *.log
@@ -46,3 +47,7 @@ htmlcov/
 checkpoints/
 outputs/
 wandb/
+
+# Template files
+*.jinja
+

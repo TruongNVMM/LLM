@@ -43,7 +43,6 @@ from transformers import (
 
 logger = logging.getLogger(__name__)
 
-
 class CodeQualityCallback(TrainerCallback):
     """
     Callback đánh giá chất lượng code định kỳ và thực hiện early stopping.
@@ -100,7 +99,7 @@ class CodeQualityCallback(TrainerCallback):
         self.patience          = patience
         self.min_delta         = min_delta
         self.monitor           = monitor
-        self.save_best         = save_best
+        self.save_best         = save_best                                                 
         self.best_model_dir    = best_model_dir
         self.state_file        = state_file
         self.execution_timeout = execution_timeout
@@ -124,8 +123,7 @@ class CodeQualityCallback(TrainerCallback):
             len(self.val_samples), eval_steps, patience, monitor,
         )
 
-    # ── State persistence ──────────────────────────────────────────────
-
+    # State persistence
     def _save_state(self) -> None:
         """Lưu trạng thái callback ra file JSON để hỗ trợ resume."""
         state = {
@@ -157,8 +155,7 @@ class CodeQualityCallback(TrainerCallback):
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Không thể load callback state: %s", exc)
 
-    # ── Generation helper ──────────────────────────────────────────────
-
+    # Generation helper
     def _generate(self, model: Any, prompt: str) -> str:
         """
         Sinh response từ model với greedy + temperature decoding.
@@ -175,6 +172,7 @@ class CodeQualityCallback(TrainerCallback):
         str
             Response của model (không bao gồm phần prompt).
         """
+        
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
