@@ -198,7 +198,22 @@ def build_grpo_config(
         config_kwargs["vllm_dtype"] = vllm_dtype
         config_kwargs["vllm_max_num_seqs"] = vllm_max_num_seqs
 
-    config = GRPOConfig(**config_kwargs)
+    # ── Filter kwargs chỉ giữ lại các tham số được GRPOConfig hỗ trợ ────────
+    import inspect  # noqa: PLC0415
+    try:
+        valid_params = set(inspect.signature(GRPOConfig).parameters.keys())
+        ignored_keys = [k for k in config_kwargs if k not in valid_params]
+        if ignored_keys:
+            logger.warning(
+                "Các tham số sau không được GRPOConfig phiên bản hiện tại hỗ trợ và sẽ bị bỏ qua: %s",
+                ignored_keys,
+            )
+        filtered_kwargs = {k: v for k, v in config_kwargs.items() if k in valid_params}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Không thể inspect signature của GRPOConfig: %s. Dùng kwargs gốc.", exc)
+        filtered_kwargs = config_kwargs
+
+    config = GRPOConfig(**filtered_kwargs)
     return config
 
 
