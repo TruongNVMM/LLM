@@ -1,0 +1,105 @@
+# =============================================================================
+#  GRPO Configuration — Tối ưu cho RTX 3090 (24GB VRAM) + vLLM
+#  Model target: Qwen2.5 3B (code-specialized)
+# =============================================================================
+
+# ─────────────────────────────────────────────
+# MODEL
+# ─────────────────────────────────────────────
+model:
+  sft_model_dir: "./model"      # Thay bằng đường dẫn SFT model của bạn
+  max_seq_length: 2048          # RTX 3090 24GB thoải mái chạy 2048 context
+  dtype: "bfloat16"             # RTX 3090 (Ampere) hỗ trợ bfloat16 chuẩn phần cứng
+  load_in_4bit: true            # Nạp 4-bit QLoRA (~1.8GB VRAM)
+
+# ─────────────────────────────────────────────
+# LORA ADAPTER
+# ─────────────────────────────────────────────
+lora:
+  r: 16                         # r=16 cho chất lượng học tốt hơn
+  lora_alpha: 32
+  lora_dropout: 0.0
+  bias: "none"
+  use_gradient_checkpointing: "unsloth"
+  random_state: 42
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# ─────────────────────────────────────────────
+# DATASET
+# ─────────────────────────────────────────────
+dataset:
+  name: "nickrosh/Evol-Instruct-Code-80k-v1"
+  split: "train"
+  test_size: 0.1
+  seed: 42
+  system_prompt: >
+    You are a helpful, respectful and honest code assistant.
+    Always answer as helpfully as possible.
+
+# ─────────────────────────────────────────────
+# GRPO TRAINING + vLLM Settings (RTX 3090 24GB)
+# ─────────────────────────────────────────────
+training:
+  output_dir: "./outputs_grpo_3090"
+  num_train_epochs: 1
+  per_device_train_batch_size: 2      # Tăng lên 2 (24GB VRAM đủ sức chứa)
+  gradient_accumulation_steps: 8      # Effective batch size = 2 × 8 = 16
+  num_generations: 8                  # Tăng lên 8 để GRPO so sánh reward tốt hơn
+  max_prompt_length: 512
+  max_completion_length: 512          # Chiều dài completion 512 tokens
+  learning_rate: 5.0e-6
+  warmup_ratio: 0.05
+  lr_scheduler_type: "cosine"
+  optim: "adamw_8bit"
+  logging_steps: 5
+  save_steps: 20
+  save_total_limit: 2
+  report_to: "none"
+
+  # ── vLLM Settings cho RTX 3090 ───────────────────────────────────────────
+  use_vllm: true
+
+  # Trên 24GB VRAM, vLLM dành 35% VRAM (~8.4GB) cho KV Cache là RẤT DƯ THỪA cho Qwen 3B
+  vllm_gpu_memory_utilization: 0.35
+
+  # bfloat16 giúp vLLM sinh text nhanh và chính xác hơn trên RTX 3090
+  vllm_dtype: "bfloat16"
+
+# ─────────────────────────────────────────────
+# REWARD WEIGHTS
+# ─────────────────────────────────────────────
+rewards:
+  weights:
+    executable: 0.40
+    syntax: 0.25
+    no_placeholder: 0.20
+    format: 0.10
+    length: 0.05
+  execution_timeout: 5
+
+# ─────────────────────────────────────────────
+# VALIDATION CALLBACK
+# ─────────────────────────────────────────────
+callback:
+  num_samples: 30
+  eval_steps: 50
+  patience: 3
+  min_delta: 0.005
+  monitor: "val/mean_reward"
+  save_best: true
+  best_model_dir: "best_grpo_3090_checkpoint"
+
+# ─────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────
+export:
+  best_model_dir: "best_grpo_3090_checkpoint"
+  output_dir: "./exported_model_3090"
+  save_method: "merged_16bit"
