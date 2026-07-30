@@ -1,0 +1,133 @@
+# =============================================================================
+#  GRPO Configuration — Tối ưu với vLLM trên RTX 2080 Ti (11GB VRAM)
+#  Model target: Qwen2.5 3B (code-specialized)
+# =============================================================================
+#
+# Nguyên lý hoạt động với use_vllm=True:
+# ─────────────────────────────────────────────────────────────────────────────
+#   Eager generation (cũ):  Model sinh completions TRỰC TIẾP → KV cache + weights
+#                            + gradient phải cùng tồn tại trên GPU → OOM
+#
+#   vLLM generation (mới):  TRL khởi động vLLM subprocess chia sẻ cùng GPU.
+#                            vLLM dùng PagedAttention → KV cache hiệu quả hơn.
+#                            Training loop và vLLM hoạt động LUÂN PHIÊN (time-sharing),
+#                            giúp giảm peak VRAM đáng kể.
+#
+# Ước tính VRAM phân bổ (Qwen2.5 3B):
+#   - Model weights (4-bit QLoRA) : ~1.8 GB
+#   - LoRA adapter + optimizer    : ~0.8 GB
+#   - vLLM KV cache (40% total)   : ~4.4 GB
+#   - Overhead + activations      : ~1.5 GB
+#   - Tổng ước tính peak          : ~8.5 GB  ✓ (trong 11 GB)
+# =============================================================================
+
+# ─────────────────────────────────────────────
+# MODEL
+# ─────────────────────────────────────────────
+model:
+  sft_model_dir: "./model"      # Đường dẫn tới SFT model (local hoặc HF Hub ID)
+  max_seq_length: 1024          # Context window tối đa cho training
+  dtype: "float16"              # RTX 2080 Ti (Turing) không có bfloat16 HW
+  load_in_4bit: true            # 4-bit QLoRA: Qwen2.5 3B chiếm ~1.8 GB VRAM
+
+# ─────────────────────────────────────────────
+# LORA ADAPTER
+# ─────────────────────────────────────────────
+lora:
+  r: 8                          # Giảm r=8 (thay vì 16) để tiết kiệm VRAM cho vLLM
+  lora_alpha: 16                # = 2 × r
+  lora_dropout: 0.0             # GRPO khuyên dùng 0 dropout
+  bias: "none"
+  use_gradient_checkpointing: "unsloth"  # Giảm VRAM activation khi backward
+  random_state: 42
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# ─────────────────────────────────────────────
+# DATASET
+# ─────────────────────────────────────────────
+dataset:
+  name: "nickrosh/Evol-Instruct-Code-80k-v1"
+  split: "train"
+  test_size: 0.1
+  seed: 42
+  system_prompt: >
+    You are a helpful, respectful and honest code assistant.
+    Always answer as helpfully as possible.
+
+# ─────────────────────────────────────────────
+# GRPO TRAINING + vLLM Settings
+# ─────────────────────────────────────────────
+training:
+  output_dir: "./outputs_grpo_vllm"
+  num_train_epochs: 1
+  per_device_train_batch_size: 1      # Batch=1 để nhường VRAM cho vLLM KV cache
+  gradient_accumulation_steps: 8      # Effective batch = 1 × 8 = 8
+  num_generations: 6                  # Tăng từ 2→6 nhờ vLLM PagedAttention hiệu quả hơn
+  max_prompt_length: 256
+  max_completion_length: 512          # Tăng được nhờ vLLM quản lý KV cache tốt hơn
+  learning_rate: 5.0e-6
+  warmup_ratio: 0.05
+  lr_scheduler_type: "cosine"
+  optim: "adamw_8bit"
+  logging_steps: 5
+  save_steps: 20
+  save_total_limit: 2
+  report_to: "none"
+
+  # ── vLLM Configuration ────────────────────────────────────────────────────
+  # TRL >= 0.15.0 khởi động vLLM subprocess tự động chia sẻ cùng GPU
+  use_vllm: true
+
+  # Phần trăm tổng VRAM dành cho vLLM KV cache
+  # 0.40 ≈ 4.4 GB trên 11 GB — vừa đủ cho Qwen2.5 3B generation
+  # Tăng nếu còn VRAM dư; giảm nếu vẫn OOM
+  vllm_gpu_memory_utilization: 0.40
+
+  # Độ dài context tối đa mà vLLM server xử lý
+  # Đặt bằng hoặc nhỏ hơn max_seq_length để tiết kiệm KV cache
+  vllm_max_model_len: 768
+
+  # Kiểu dữ liệu cho vLLM (float16 vì RTX 2080 Ti không hỗ trợ bfloat16 HW)
+  vllm_dtype: "float16"
+
+  # Số sequences tối đa vLLM xử lý song song (giảm để tiết kiệm KV cache)
+  vllm_max_num_seqs: 64
+
+# ─────────────────────────────────────────────
+# REWARD WEIGHTS
+# ─────────────────────────────────────────────
+rewards:
+  weights:
+    executable: 0.40
+    syntax: 0.25
+    no_placeholder: 0.20
+    format: 0.10
+    length: 0.05
+  execution_timeout: 5
+
+# ─────────────────────────────────────────────
+# VALIDATION CALLBACK & EARLY STOPPING
+# ─────────────────────────────────────────────
+callback:
+  num_samples: 20
+  eval_steps: 50
+  patience: 3
+  min_delta: 0.005
+  monitor: "val/mean_reward"
+  save_best: true
+  best_model_dir: "best_grpo_vllm_checkpoint"
+
+# ─────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────
+export:
+  best_model_dir: "best_grpo_vllm_checkpoint"
+  output_dir: "./exported_model_vllm"
+  save_method: "merged_16bit"

@@ -88,7 +88,8 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         default=str(_ROOT / "configs" / "grpo_config.yaml"),
-        help="Đường dẫn tới file config YAML.",
+        help="Đường dẫn tới file config YAML. "
+             "Dùng configs/grpo_config_vllm.yaml để bật tối ưu vLLM.",
     )
     parser.add_argument(
         "--sft_model_dir",
@@ -115,6 +116,12 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         choices=["none", "wandb", "tensorboard"],
         help="Platform để log metrics.",
+    )
+    parser.add_argument(
+        "--use_vllm",
+        action="store_true",
+        default=None,
+        help="Override use_vllm=True từ CLI (không cần sửa config YAML).",
     )
     return parser.parse_args()
 
@@ -146,11 +153,26 @@ def main() -> None:
         training_cfg["num_train_epochs"] = args.num_train_epochs
     if args.report_to:
         training_cfg["report_to"] = args.report_to
+    # --use_vllm CLI flag override (bật vLLM mà không cần sửa YAML)
+    if getattr(args, "use_vllm", None):
+        training_cfg["use_vllm"] = True
+
+    # ── Đọc vLLM settings (có default an toàn nếu key không tồn tại) ──────
+    use_vllm                   = training_cfg.get("use_vllm", False)
+    vllm_gpu_memory_utilization = training_cfg.get("vllm_gpu_memory_utilization", 0.40)
+    vllm_max_model_len          = training_cfg.get("vllm_max_model_len", None)
+    vllm_dtype                  = training_cfg.get("vllm_dtype", "float16")
+    vllm_max_num_seqs           = training_cfg.get("vllm_max_num_seqs", 64)
 
     logger.info("=" * 60)
     logger.info("GRPO Fine-Tuning Pipeline bắt đầu")
     logger.info("SFT Model : %s", model_cfg["sft_model_dir"])
     logger.info("Output dir: %s", training_cfg["output_dir"])
+    if use_vllm:
+        logger.info("Generation: vLLM (gpu_memory_utilization=%.2f, max_len=%s, dtype=%s)",
+                    vllm_gpu_memory_utilization, vllm_max_model_len, vllm_dtype)
+    else:
+        logger.info("Generation: Eager (không dùng vLLM)")
     logger.info("=" * 60)
 
     # ── 2. Load SFT model đã fine-tune + áp dụng LoRA ────────────────────
@@ -245,6 +267,12 @@ def main() -> None:
         save_steps=training_cfg["save_steps"],
         save_total_limit=training_cfg["save_total_limit"],
         report_to=training_cfg["report_to"],
+        # ── vLLM settings ────────────────────────────────────────────────
+        use_vllm=use_vllm,
+        vllm_gpu_memory_utilization=vllm_gpu_memory_utilization,
+        vllm_max_model_len=vllm_max_model_len,
+        vllm_dtype=vllm_dtype,
+        vllm_max_num_seqs=vllm_max_num_seqs,
     )
     trainer = build_trainer(
         model=model,
