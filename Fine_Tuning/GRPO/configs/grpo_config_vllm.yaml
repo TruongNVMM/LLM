@@ -16,7 +16,7 @@
 # Ước tính VRAM phân bổ (Qwen2.5 3B):
 #   - Model weights (4-bit QLoRA) : ~1.8 GB
 #   - LoRA adapter + optimizer    : ~0.8 GB
-#   - vLLM KV cache (40% total)   : ~4.4 GB
+#   - vLLM KV cache (50% total)   : ~5.5 GB
 #   - Overhead + activations      : ~1.5 GB
 #   - Tổng ước tính peak          : ~8.5 GB  ✓ (trong 11 GB)
 # =============================================================================
@@ -69,7 +69,7 @@ training:
   num_train_epochs: 1
   per_device_train_batch_size: 1      # Batch=1 để nhường VRAM cho vLLM KV cache
   gradient_accumulation_steps: 8      # Effective batch = 1 × 8 = 8
-  num_generations: 6                  # Tăng từ 2→6 nhờ vLLM PagedAttention hiệu quả hơn
+  num_generations: 4                  # Tăng từ 2→6 nhờ vLLM PagedAttention hiệu quả hơn
   max_prompt_length: 256
   max_completion_length: 512          # Tăng được nhờ vLLM quản lý KV cache tốt hơn
   learning_rate: 5.0e-6
@@ -86,9 +86,9 @@ training:
   use_vllm: true
 
   # Phần trăm tổng VRAM dành cho vLLM KV cache
-  # 0.40 ≈ 4.4 GB trên 11 GB — vừa đủ cho Qwen2.5 3B generation
+  # 0.50 ≈ 5.5 GB trên 11 GB — vừa đủ cho Qwen2.5 3B generation
   # Tăng nếu còn VRAM dư; giảm nếu vẫn OOM
-  vllm_gpu_memory_utilization: 0.40
+  vllm_gpu_memory_utilization: 0.5
 
   # Độ dài context tối đa mà vLLM server xử lý
   # Đặt bằng hoặc nhỏ hơn max_seq_length để tiết kiệm KV cache
