@@ -9,6 +9,7 @@ venv/
 env/
 ENV/
 .cache/
+unsloth_compiled_cache/
 
 # Jupyter / IPython
 .ipynb_checkpoints/
@@ -48,6 +49,5 @@ checkpoints/
 outputs/
 wandb/
 
-# Template files
-*.jinja
+
 
