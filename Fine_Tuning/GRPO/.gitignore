@@ -49,5 +49,9 @@ checkpoints/
 outputs/
 wandb/
 
-
+#logs 
+logs/
+best_grpo_checkpoint/
+*.json
+*.log
 
