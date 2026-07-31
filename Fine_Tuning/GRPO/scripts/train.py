@@ -34,7 +34,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from src.callbacks.early_stopping import CodeQualityCallback
+from src.callbacks import CodeQualityCallback, TrainingMetricsLoggerCallback
 from src.data.dataset import build_grpo_dataset, load_and_split_dataset
 from src.model.loader import apply_lora, load_model
 from src.rewards.code_rewards import (
@@ -281,13 +281,16 @@ def main() -> None:
         vllm_dtype=vllm_dtype,
         vllm_max_num_seqs=vllm_max_num_seqs,
     )
+    train_metrics_file = str(_ROOT / "logs" / "train_metrics.log")
+    train_metrics_callback = TrainingMetricsLoggerCallback(log_file=train_metrics_file)
+
     trainer = build_trainer(
         model=model,
         tokenizer=tokenizer,
         config=config,
         train_dataset=grpo_dataset,
         reward_funcs=reward_funcs,
-        callbacks=[callback],
+        callbacks=[callback, train_metrics_callback],
     )
 
     # ── 7. Training ───────────────────────────────────────────────────────

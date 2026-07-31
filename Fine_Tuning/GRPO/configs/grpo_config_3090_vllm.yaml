@@ -58,7 +58,7 @@ training:
   warmup_ratio: 0.05
   lr_scheduler_type: "cosine"
   optim: "adamw_8bit"
-  logging_steps: 5
+  logging_steps: 4            # Log training metrics mỗi 4 steps (cứ sau 4 lần chạy)
   save_steps: 20
   save_total_limit: 2
   report_to: "none"
