@@ -90,10 +90,10 @@ python scripts/evaluate.py --benchmark humaneval --pass_k 1
 
 ## Benchmark Results
 
-| Benchmark | Pass@1 |
-|-----------|--------|
-| HumanEval | 0.73 |
-| HumanEval+ | 0.65 |
+| Benchmark | Pass@1 | Pass@5 | Pass@10 |
+|-----------|--------|--------|--------|
+| HumanEval | 0.73 | 0.85 | 0.91 |
+| HumanEval+ | 0.65 | 0.78 | 0.85 |
 
 ---
 Due to limited resources and the lack of a powerful GPU such as an RTX 3090, this project had to be trained on Google Colab

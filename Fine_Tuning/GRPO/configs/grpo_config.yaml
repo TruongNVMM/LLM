@@ -9,7 +9,7 @@
 model:
   # Đường dẫn tới SFT model đã fine-tune trước đó
   # Thay bằng đường dẫn thực tế trên máy / Google Drive của bạn
-  sft_model_dir: "/content/drive/MyDrive/Data Science Projects/NLP_Project/LLMs/GRPO/model"
+  sft_model_dir: "./model"
   max_seq_length: 2048
   dtype: null          # null = auto-detect (bfloat16 trên Ampere+, float16 trên T4)
   load_in_4bit: true   # 4-bit quantization để tiết kiệm VRAM
@@ -49,8 +49,8 @@ dataset:
 # GRPO TRAINING
 # ─────────────────────────────────────────────
 training:
-  output_dir: "/content/drive/MyDrive/Data Science Projects/NLP_Project/LLMs/GRPO/outputs_grpo"
-  num_train_epochs: 1
+  output_dir: "./outputs_grpo"
+  num_train_epochs: 2
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
   num_generations: 4           # Số responses sinh ra mỗi prompt để GRPO so sánh
@@ -83,7 +83,7 @@ rewards:
 callback:
   num_samples: 50          # Số mẫu dùng để eval mỗi lần (~3 phút T4)
   eval_steps: 4            # Eval mỗi 4 steps (cứ sau 4 lần chạy)
-  patience: 3              # Dừng nếu N lần eval liên tiếp không cải thiện
+  patience: 20              # Dừng nếu N lần eval liên tiếp không cải thiện
   min_delta: 0.005         # Ngưỡng cải thiện tối thiểu
   monitor: "val/mean_reward"
   save_best: true
