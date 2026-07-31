@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -42,6 +43,7 @@ from transformers import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 class CodeQualityCallback(TrainerCallback):
     """
@@ -57,7 +59,7 @@ class CodeQualityCallback(TrainerCallback):
         Số mẫu lấy ngẫu nhiên từ val_dataset cho mỗi lần eval.
         Mặc định 50 (~3 phút T4 GPU).
     eval_steps : int
-        Eval mỗi bao nhiêu training steps. Mặc định 100.
+        Eval mỗi bao nhiêu training steps. Mặc định 4 (cứ sau 4 lần chạy).
     patience : int
         Số lần eval liên tiếp không cải thiện trước khi dừng training.
         Mặc định 3.
@@ -76,6 +78,9 @@ class CodeQualityCallback(TrainerCallback):
         Mặc định "callback_state.json".
     execution_timeout : int
         Timeout (giây) cho việc chạy code trong subprocess. Mặc định 5.
+    log_file : str
+        File log lưu trữ các metric đánh giá qua từng đợt eval.
+        Mặc định "eval_metrics.log".
     """
 
     def __init__(
@@ -83,7 +88,7 @@ class CodeQualityCallback(TrainerCallback):
         val_dataset: Any,
         tokenizer: Any,
         num_samples: int = 50,
-        eval_steps: int = 100,
+        eval_steps: int = 4,
         patience: int = 3,
         min_delta: float = 0.005,
         monitor: str = "val/mean_reward",
@@ -91,6 +96,7 @@ class CodeQualityCallback(TrainerCallback):
         best_model_dir: str = "best_grpo_checkpoint",
         state_file: str = "callback_state.json",
         execution_timeout: int = 5,
+        log_file: str = "eval_metrics.log",
     ) -> None:
         super().__init__()
         self.tokenizer         = tokenizer
@@ -103,6 +109,7 @@ class CodeQualityCallback(TrainerCallback):
         self.best_model_dir    = best_model_dir
         self.state_file        = state_file
         self.execution_timeout = execution_timeout
+        self.log_file          = log_file
 
         # Lấy ngẫu nhiên num_samples mẫu từ val_dataset
         val_dataset  = val_dataset.shuffle(seed=42)
@@ -119,8 +126,8 @@ class CodeQualityCallback(TrainerCallback):
         self._load_state()
         logger.info(
             "[CodeQualityCallback] Khởi tạo | val_samples=%d | "
-            "eval_steps=%d | patience=%d | monitor=%s",
-            len(self.val_samples), eval_steps, patience, monitor,
+            "eval_steps=%d | patience=%d | monitor=%s | log_file=%s",
+            len(self.val_samples), eval_steps, patience, monitor, log_file,
         )
 
     # State persistence
@@ -302,6 +309,67 @@ class CodeQualityCallback(TrainerCallback):
             "val/mean_reward": round(reward_sum   / total, 4),
         }
 
+    # ── File Logging helper ───────────────────────────────────────────
+
+    def _log_metrics_to_file(
+        self,
+        metrics: Dict[str, float],
+        state: TrainerState,
+        status_msg: str,
+        improved: bool,
+    ) -> None:
+        """
+        Ghi log các metric đánh giá và thông tin early stopping ra file log.
+
+        Hỗ trợ ghi đồng thời 2 dạng:
+          1. Text format trong self.log_file (mặc định: eval_metrics.log)
+          2. JSON Lines format trong <self.log_file>.jsonl (mặc định: eval_metrics.jsonl)
+        """
+        import datetime
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        step    = state.global_step
+
+        # Tự động tạo thư mục chứa file log nếu chưa tồn tại
+        log_path = Path(self.log_file)
+        if log_path.parent and not log_path.parent.exists():
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. Text log formatted entry
+        log_entry = (
+            f"[{now_str}] STEP {step:05d} | "
+            f"Pass Rate: {metrics['val/pass_rate']:.2%} | "
+            f"Syntax Rate: {metrics['val/syntax_rate']:.2%} | "
+            f"Format Rate: {metrics['val/format_rate']:.2%} | "
+            f"Mean Reward: {metrics['val/mean_reward']:.4f} | "
+            f"Status: {status_msg}\n"
+        )
+
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+        except OSError as exc:
+            logger.warning("Không thể ghi log metrics vào file %s: %s", self.log_file, exc)
+
+        # 2. JSONL formatted entry cho việc parse/plot dữ liệu tự động
+        jsonl_path = log_path.with_suffix(".jsonl")
+        json_entry = {
+            "timestamp": now_str,
+            "step": step,
+            "metrics": metrics,
+            "status": status_msg,
+            "improved": improved,
+            "best_value": self.best_value,
+            "best_step": self.best_step,
+            "wait_count": self.wait_count,
+            "patience": self.patience,
+        }
+        try:
+            with open(jsonl_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(json_entry, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            logger.warning("Không thể ghi JSONL metrics vào file %s: %s", jsonl_path, exc)
+
     # ── Early stopping logic ───────────────────────────────────────────
 
     def _check_early_stop(
@@ -312,7 +380,7 @@ class CodeQualityCallback(TrainerCallback):
         model: Any = None,
     ) -> TrainerControl:
         """
-        Kiểm tra điều kiện early stopping và cập nhật best state.
+        Kiểm tra điều kiện early stopping, cập nhật best state và ghi file log.
 
         Parameters
         ----------
@@ -342,16 +410,20 @@ class CodeQualityCallback(TrainerCallback):
             self.wait_count = 0
 
             if old_value is None:
+                status_msg = f"Khởi tạo best {self.monitor}={current:.4f}"
+            else:
+                status_msg = (
+                    f"✓ Cải thiện: {old_value:.4f} → {current:.4f} "
+                    f"(+{current - old_value:.4f}) | Reset patience (0/{self.patience})"
+                )
+
+            if old_value is None:
                 print(
                     f"  [EarlyStopping] Khởi tạo "
                     f"best {self.monitor}={current:.4f}"
                 )
             else:
-                print(
-                    f"  [EarlyStopping] ✓ Cải thiện: "
-                    f"{old_value:.4f} → {current:.4f} "
-                    f"(+{current - old_value:.4f}) | reset patience"
-                )
+                print(f"  [EarlyStopping] {status_msg}")
 
             # Lưu best model
             if self.save_best and model is not None:
@@ -364,12 +436,12 @@ class CodeQualityCallback(TrainerCallback):
         else:
             self.wait_count += 1
             remaining = self.patience - self.wait_count
-            print(
-                f"  [EarlyStopping] ✗ Không cải thiện "
-                f"({self.wait_count}/{self.patience}) | "
+            status_msg = (
+                f"✗ Không cải thiện ({self.wait_count}/{self.patience}) | "
                 f"best={self.best_value:.4f} tại step {self.best_step} | "
                 f"còn {remaining} lần"
             )
+            print(f"  [EarlyStopping] {status_msg}")
 
             if self.wait_count >= self.patience:
                 print(f"\n{'=' * 55}")
@@ -380,6 +452,9 @@ class CodeQualityCallback(TrainerCallback):
                 )
                 print(f"{'=' * 55}\n")
                 control.should_training_stop = True
+
+        # Ghi metric và status ra file log
+        self._log_metrics_to_file(metrics, state, status_msg, improved)
 
         # Lưu state ra file (hỗ trợ resume)
         self._save_state()

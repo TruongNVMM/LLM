@@ -89,12 +89,13 @@ rewards:
 # ─────────────────────────────────────────────
 callback:
   num_samples: 30
-  eval_steps: 50
+  eval_steps: 4            # Eval mỗi 4 steps (cứ sau 4 lần chạy)
   patience: 3
   min_delta: 0.005
   monitor: "val/mean_reward"
   save_best: true
   best_model_dir: "best_grpo_3090_checkpoint"
+  log_file: "eval_metrics.log"
 
 # ─────────────────────────────────────────────
 # EXPORT

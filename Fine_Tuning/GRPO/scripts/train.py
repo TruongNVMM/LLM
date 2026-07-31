@@ -55,6 +55,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
+        logging.FileHandler("grpo_training.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -236,17 +237,23 @@ def main() -> None:
     val_ds = grpo_dataset.shuffle(seed=42).select(
         range(min(100, len(grpo_dataset)))
     )
+    log_file_value = callback_cfg.get("log_file", "logs/eval_metrics.log")
+    log_file_path = Path(log_file_value)
+    if not log_file_path.is_absolute():
+        log_file_path = (_ROOT / log_file_path).resolve()
+    log_file = str(log_file_path)
     callback = CodeQualityCallback(
         val_dataset=val_ds,
         tokenizer=tokenizer,
         num_samples=callback_cfg["num_samples"],
-        eval_steps=callback_cfg["eval_steps"],
+        eval_steps=callback_cfg.get("eval_steps", 4),
         patience=callback_cfg["patience"],
         min_delta=callback_cfg["min_delta"],
         monitor=callback_cfg["monitor"],
         save_best=callback_cfg.get("save_best", True),
         best_model_dir=callback_cfg.get("best_model_dir", "best_grpo_checkpoint"),
         execution_timeout=execution_timeout,
+        log_file=log_file,
     )
 
     # ── 6. GRPOConfig + GRPOTrainer ───────────────────────────────────────
