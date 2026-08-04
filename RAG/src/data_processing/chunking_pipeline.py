@@ -23,6 +23,7 @@ import json
 import re
 import sys
 import io
+import unicodedata
 from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -103,14 +104,26 @@ ATTACH_PATTERN = re.compile(
     re.DOTALL
 )
 
+def clean_emojis_and_symbols(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = []
+    for ch in value:
+        cat = unicodedata.category(ch)
+        # Strip control characters (Cc) except newline, carriage return, and tab
+        if cat == "Cc" and ch not in ("\n", "\r", "\t"):
+            continue
+        if cat == "So" or ch in ("□", "☐", "■", "▪", "▫", "♦", "●", "○", "★", "☆", "▶", "►", "◄", "▼", "▲"):
+            continue
+        cleaned.append(ch)
+    res = "".join(cleaned)
+    res = re.sub(r' +', ' ', res)
+    return res.strip()
+
 def _clean_attachment_name(name: str) -> str:
     """Return a human-readable attachment label."""
     name = name.strip()
-    # If it looks like a URL, shorten it
-    if name.startswith('http'):
-        return 'Tài liệu đính kèm (Google Drive/Doc)'
-    # Remove trailing punctuation artefacts  (e.g. "Xem tại đây.")
-    if re.fullmatch(r'[Xx]em tại đây[.,;]?', name):
+    if name.startswith('http') or name.lower().startswith('chi tiết xem tại đây') or name.lower().startswith('xem tại đây'):
         return 'Tài liệu đính kèm'
     return name
 
@@ -123,10 +136,10 @@ def extract_attachments(text: str) -> tuple[str, list[tuple[str, str]]]:
     attachments = []
     def _replace(m: re.Match) -> str:
         attachments.append((_clean_attachment_name(m.group('name')),
-                            m.group('content').strip()))
+                            clean_emojis_and_symbols(m.group('content').strip())))
         return ''
     body = ATTACH_PATTERN.sub(_replace, text)
-    body = re.sub(r'\n{3,}', '\n\n', body).strip()
+    body = clean_emojis_and_symbols(re.sub(r'\n{3,}', '\n\n', body).strip())
     return body, attachments
 
 
@@ -195,12 +208,28 @@ def build_chunks(doc: dict) -> list[dict]:
 def main():
     all_chunks = []
     docs_processed = 0
+    seen_attachment_hashes = set()
+    dedup_count = 0
 
     with open(INPUT_FILE, 'r', encoding='utf-8') as f:
         for line in f:
             doc = json.loads(line)
             chunks = build_chunks(doc)
-            all_chunks.extend(chunks)
+            
+            # Deduplicate attachment chunks
+            filtered_chunks = []
+            for chunk in chunks:
+                if chunk['is_attachment']:
+                    # Hash the pure content without title prefix
+                    content_body = chunk['text'].split('\n\n', 1)[-1].strip()
+                    content_hash = hash(content_body)
+                    if content_hash in seen_attachment_hashes:
+                        dedup_count += 1
+                        continue
+                    seen_attachment_hashes.add(content_hash)
+                filtered_chunks.append(chunk)
+                
+            all_chunks.extend(filtered_chunks)
             docs_processed += 1
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -218,6 +247,7 @@ def main():
     print(f"   Tổng chunks đầu ra: {len(all_chunks)}")
     print(f"     - Body chunks   : {len(body_chunks)}")
     print(f"     - Attach chunks : {len(att_chunks)}")
+    print(f"     - Đã bóc trùng (Deduplicated): {dedup_count} attachment chunks")
     print(f"   Độ dài chunk:")
     print(f"     - Trung bình    : {sum(lengths)/len(lengths):.0f} chars")
     print(f"     - Lớn nhất      : {max(lengths)} chars")

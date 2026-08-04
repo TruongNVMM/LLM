@@ -23,6 +23,9 @@ def clean_emojis_and_symbols(value: str) -> str:
     cleaned = []
     for ch in value:
         cat = unicodedata.category(ch)
+        # Strip control characters (Cc) except newline, carriage return, and tab
+        if cat == "Cc" and ch not in ("\n", "\r", "\t"):
+            continue
         if cat == "So" or ch in ("□", "☐", "■", "▪", "▫", "♦", "●", "○", "★", "☆", "▶", "►", "◄", "▼", "▲"):
             continue
         cleaned.append(ch)

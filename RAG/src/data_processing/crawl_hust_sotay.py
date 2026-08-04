@@ -401,6 +401,28 @@ def enrich_links(
     return enriched
 
 
+def get_meaningful_attachment_name(link: dict[str, Any]) -> str:
+    anchor = str(link.get("anchor_text") or "").strip()
+    if anchor and not is_generic_anchor(anchor) and len(anchor) < 80:
+        return anchor
+    
+    local_name = str(link.get("local_filename") or "").strip()
+    if local_name and not local_name.startswith("http") and not is_generic_anchor(local_name):
+        return local_name
+        
+    context = str(link.get("context") or "").strip()
+    if context:
+        lines = [line.strip() for line in context.split("\n") if line.strip()]
+        for line in lines:
+            clean_line = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", line)
+            clean_line = re.sub(r"[#\*\|_]+", "", clean_line).strip()
+            if clean_line and not is_generic_anchor(clean_line) and len(clean_line) > 3:
+                if "@" not in clean_line and not clean_line.isdigit():
+                    return clean_line[:80]
+                    
+    return "Tài liệu đính kèm"
+
+
 def build_attachment_section(links: list[dict[str, Any]]) -> str:
     """Build a readable section of fetched attachment content for rag_text."""
     sections: list[str] = []
@@ -408,10 +430,7 @@ def build_attachment_section(links: list[dict[str, Any]]) -> str:
         content = link.get("content")
         if not content:
             continue
-        label = link.get("anchor_text") or link.get("url", "")
-        # Strip label if it's just a generic anchor like 'tại đây'
-        if is_generic_anchor(label):
-            label = link.get("url", label)
+        label = get_meaningful_attachment_name(link)
         sections.append(
             f"[Nội dung tài liệu đính kèm: {label}]\n{content}\n[/Nội dung]"
         )
@@ -424,10 +443,15 @@ def clean_emojis_and_symbols(value: str) -> str:
     cleaned = []
     for ch in value:
         cat = unicodedata.category(ch)
+        # Strip control characters (Cc) except newline, carriage return, and tab
+        if cat == "Cc" and ch not in ("\n", "\r", "\t"):
+            continue
         if cat == "So" or ch in ("□", "☐", "■", "▪", "▫", "♦", "●", "○", "★", "☆", "▶", "►", "◄", "▼", "▲"):
             continue
         cleaned.append(ch)
-    return "".join(cleaned)
+    res = "".join(cleaned)
+    res = re.sub(r" +", " ", res)
+    return res.strip()
 
 
 def clean_text(value: str) -> str:
