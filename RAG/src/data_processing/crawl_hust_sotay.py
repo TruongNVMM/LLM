@@ -174,17 +174,32 @@ class LinkSpan:
     end: int
 
 
+""" Class HtmlTextAndLinkParser extends HTMLParser to extract text and links from HTML content """
+# VD: <p>Hello <a href="/abc">world</a></p>
+# Code sẽ gọi theo thứ tự: 
+    # handle_starttag("p")
+    # handle_data("Hello ")
+
+    # handle_starttag("a")
+    # handle_data("world")
+    # handle_endtag("a")
+
+    # handle_endtag("p")
+
 class HtmlTextAndLinkParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.links: list[LinkSpan] = []
-        self._active_link: dict[str, Any] | None = None
+        self.parts: list[str] = []                          # Lưu các đoạn text: parts = ["Hello ", "world"]
+        self.links: list[LinkSpan] = []                     # Lưu danh sách các liên kết links = [LinkSpan(href="/abc", text="world", start=6, end=11)]
+        self._active_link: dict[str, Any] | None = None     # Lưu thông tin liên kết đang xử lý, ví dụ: {"href": "/abc", "start": 6, "parts": ["world"]}
 
+    # @property để dùng như một thuộc tính chứ không phải là một phương thức gọi hàm: HtmlTextAndLinkParser.text_so_far 
+    # Trả về chuỗi text đã parse đến hiện tại
     @property
     def text_so_far(self) -> str:
         return "".join(self.parts)
 
+    # Hàm handle_starttag được gọi khi parser gặp một thẻ mở (ví dụ: <a href="/abc">)
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         if tag in BLOCK_TAGS:
@@ -193,6 +208,7 @@ class HtmlTextAndLinkParser(HTMLParser):
             href = dict(attrs).get("href") or ""
             self._active_link = {"href": href, "start": len(self.text_so_far), "parts": []}
 
+    # Hàm handle_endtag được gọi khi parser gặp một thẻ đóng (ví dụ: </a>)
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
         if tag == "a" and self._active_link is not None:
@@ -209,6 +225,7 @@ class HtmlTextAndLinkParser(HTMLParser):
         if tag in BLOCK_TAGS:
             self._append_newline()
 
+    # Hàm handle_data được gọi khi parser gặp một đoạn text (ví dụ: "Hello ")
     def handle_data(self, data: str) -> None:
         if not data:
             return
@@ -216,13 +233,17 @@ class HtmlTextAndLinkParser(HTMLParser):
         if self._active_link is not None:
             self._active_link["parts"].append(data)
 
+    # Hàm _append_newline được gọi để thêm một dòng mới vào parts nếu cần thiết
     def _append_newline(self) -> None:
         if self.parts and not self.text_so_far.endswith("\n"):
             self.parts.append("\n")
 
-
+""" Function to send a POST request with JSON data """
+# endpoint: đường dẫn API, ví dụ "login" hoặc "users/create"
+# payload: dữ liệu sẽ gửi lên server dưới dạng dictionary
+# timeout: thời gian chờ tối đa là 30 giây
 def post_json(endpoint: str, payload: dict[str, Any], timeout: int = 30) -> dict[str, Any]:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")          # Chuyển payload từ dict sang json
     request = Request(
         f"{API_BASE}/{endpoint.lstrip('/')}",
         data=body,
@@ -241,7 +262,7 @@ def post_json(endpoint: str, payload: dict[str, Any], timeout: int = 30) -> dict
         raise RuntimeError(f"Request failed for {endpoint}: {exc}") from exc
 
 
-# ── Attachment fetching ───────────────────────────────────────────────────────
+""" Attachment fetching """
 
 def _http_get_bytes(url: str) -> bytes | None:
     """Download raw bytes from a URL; return None on any error."""
@@ -319,7 +340,7 @@ def fetch_attachment_text(link: dict[str, Any]) -> tuple[str | None, str]:
     if link_type not in FETCHABLE_TYPES:
         return None, "skipped"
 
-    # ── Google Doc ────────────────────────────────────────────────────────────
+    # Google Doc 
     if link_type == "google_doc":
         doc_id = _extract_gdoc_id(url)
         if not doc_id:
@@ -333,7 +354,7 @@ def fetch_attachment_text(link: dict[str, Any]) -> tuple[str | None, str]:
             return None, "empty"
         return text[:ATTACHMENT_MAX_CHARS], "ok"
 
-    # ── Google Drive (usually PDF) ────────────────────────────────────────────
+    # Google Drive (usually PDF) 
     if link_type == "google_drive":
         file_id = _extract_gdrive_id(url)
         if not file_id:
@@ -354,7 +375,7 @@ def fetch_attachment_text(link: dict[str, Any]) -> tuple[str | None, str]:
             return text[:ATTACHMENT_MAX_CHARS], "ok"
         return None, "empty"
 
-    # ── Direct PDF link ───────────────────────────────────────────────────────
+    # Direct PDF link
     if link_type == "pdf":
         if _PdfReader is None:
             return None, "no_pypdf"
@@ -402,13 +423,13 @@ def enrich_links(
 
 
 def get_meaningful_attachment_name(link: dict[str, Any]) -> str:
-    anchor = str(link.get("anchor_text") or "").strip()
-    if anchor and not is_generic_anchor(anchor) and len(anchor) < 80:
-        return anchor
-    
     local_name = str(link.get("local_filename") or "").strip()
     if local_name and not local_name.startswith("http") and not is_generic_anchor(local_name):
         return local_name
+
+    anchor = str(link.get("anchor_text") or "").strip()
+    if anchor and not is_generic_anchor(anchor) and len(anchor) < 80:
+        return anchor
         
     context = str(link.get("context") or "").strip()
     if context:
@@ -416,6 +437,8 @@ def get_meaningful_attachment_name(link: dict[str, Any]) -> str:
         for line in lines:
             clean_line = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", line)
             clean_line = re.sub(r"[#\*\|_]+", "", clean_line).strip()
+            # Bỏ từ bị cắt dở ở đầu dòng (ví dụ: 'ghiệp; lịch...' -> 'lịch...')
+            clean_line = re.sub(r"^[^\s\w]*[a-zA-Z0-9àáảãạăắằẳẵặâấầnẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]+[^\s\w]*\s+", "", clean_line).strip()
             if clean_line and not is_generic_anchor(clean_line) and len(clean_line) > 3:
                 if "@" not in clean_line and not clean_line.isdigit():
                     return clean_line[:80]
@@ -535,7 +558,15 @@ def extract_text_and_links(html: str, base_url: str, title: str) -> tuple[str, l
     links = []
     for idx, span in enumerate(parser.links, start=1):
         absolute_url = urljoin(base_url, span.href)
-        context = clean_text(raw_text[max(0, span.start - 180) : span.end + 180])
+        start_pos = max(0, span.start - 180)
+        # Nếu start_pos rơi vào giữa từ, lùi lại/tiến lên khoảng trắng gần nhất
+        if start_pos > 0 and not raw_text[start_pos - 1].isspace():
+            space_idx = raw_text.find(" ", start_pos)
+            if space_idx != -1 and space_idx < span.start:
+                start_pos = space_idx + 1
+
+        end_pos = min(len(raw_text), span.end + 180)
+        context = clean_text(raw_text[start_pos:end_pos])
         anchor = span.text or absolute_url
         if is_generic_anchor(anchor):
             meaning = f"Liên kết trong bài '{title}': {context}"

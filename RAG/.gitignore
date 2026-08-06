@@ -1,0 +1,49 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables
+# .env
+.env.*
+*.ps1
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Data / artifacts (adjust if you want to track some of these)
+data/raw/
+data/processed/
+*.jsonl
+*.json
+*.csv
+*.parquet
+
+# Model / cache files
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Temporary files
+tmp/
+temp/
