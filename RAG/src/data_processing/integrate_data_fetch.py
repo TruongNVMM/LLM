@@ -1,6 +1,8 @@
 import os
 import json
+import platform
 import re
+import subprocess
 import sys
 import io
 import unicodedata
@@ -14,6 +16,54 @@ try:
     HAS_WIN32 = True
 except ImportError:
     HAS_WIN32 = False
+
+# ---------------------------------------------------------------------------
+# Script paths (relative to project root, where this script is run from)
+# ---------------------------------------------------------------------------
+_SCRIPT_DIR = Path(__file__).parent
+CONVERT_SH  = _SCRIPT_DIR / "convert_docs.sh"
+CONVERT_PS1 = _SCRIPT_DIR / "convert_docs.ps1"
+
+
+def run_convert_script(data_fetch_dir: str = "data_fetch") -> None:
+    """Gọi script chuyển đổi .doc → .docx phù hợp với hệ điều hành hiện tại.
+
+    - Linux / macOS : chạy convert_docs.sh bằng bash (yêu cầu LibreOffice).
+    - Windows       : chạy convert_docs.ps1 bằng PowerShell (yêu cầu Microsoft Word).
+    """
+    system = platform.system()  # 'Linux', 'Darwin', 'Windows'
+
+    if system in ("Linux", "Darwin"):
+        script = CONVERT_SH
+        if not script.exists():
+            print(f"[WARN] Không tìm thấy {script}. Bỏ qua bước convert .doc → .docx.")
+            return
+        cmd = ["bash", str(script), data_fetch_dir, data_fetch_dir]
+        shell = False
+    elif system == "Windows":
+        script = CONVERT_PS1
+        if not script.exists():
+            print(f"[WARN] Không tìm thấy {script}. Bỏ qua bước convert .doc → .docx.")
+            return
+        cmd = [
+            "powershell", "-ExecutionPolicy", "Bypass",
+            "-File", str(script)
+        ]
+        shell = False
+    else:
+        print(f"[WARN] Hệ điều hành '{system}' chưa được hỗ trợ tự động. Bỏ qua convert.")
+        return
+
+    print(f"[INFO] Đang chạy script convert ({system}): {script.name} ...")
+    result = subprocess.run(cmd, capture_output=True, text=True, shell=shell)
+    if result.stdout:
+        print(result.stdout.strip())
+    if result.returncode != 0:
+        print(f"[WARN] Script convert kết thúc với mã lỗi {result.returncode}.")
+        if result.stderr:
+            print(result.stderr.strip())
+    else:
+        print(f"[INFO] Script convert hoàn tất.")
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
@@ -100,14 +150,28 @@ def extract_doc_binary(path):
         return ""
 
 def get_file_text(fpath):
+    """Trích xuất văn bản từ file .pdf, .docx, hoặc .doc.
+
+    Với file .doc, nếu đã có file .docx tương ứng (do convert_docs script tạo ra)
+    thì ưu tiên dùng .docx để trích xuất chính xác nhất.
+    """
     ext = os.path.splitext(fpath)[1].lower()
     if ext == '.docx':
         return extract_docx(fpath)
     elif ext == '.pdf':
         return extract_pdf(fpath)
     elif ext == '.doc':
+        # Ưu tiên file .docx đã được convert từ .doc (bởi convert_docs script)
+        docx_path = os.path.splitext(fpath)[0] + '.docx'
+        if os.path.exists(docx_path):
+            res = extract_docx(docx_path)
+            if res:
+                return res
+        # Thử đọc trực tiếp .doc (đôi khi file .doc thực ra là .docx đổi tên)
         res = extract_docx(fpath)
-        if res: return res
+        if res:
+            return res
+        # Fallback: đọc nhị phân (binary parsing / COM)
         return extract_doc_binary(fpath)
     return ""
 
@@ -134,7 +198,14 @@ file_mapping = [
     ("Mẫu-Giấy xác nhận công nợ - Thụy.doc", 100, "IQALcDMWqSVw"),
 ]
 
+# ---------------------------------------------------------------------------
+# Bước 0: Tự động convert .doc → .docx bằng script phù hợp với OS
+# ---------------------------------------------------------------------------
+run_convert_script(data_fetch_dir="data_fetch")
+
+# ---------------------------------------------------------------------------
 # Extract content for all mapped files
+# ---------------------------------------------------------------------------
 attachment_data = {}
 for fname, doc_id, sig in file_mapping:
     fpath = os.path.join("data_fetch", fname)

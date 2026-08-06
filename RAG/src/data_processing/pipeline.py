@@ -89,8 +89,10 @@ from chunking_pipeline import (  # noqa: E402
 )
 
 # ---------------------------------------------------------------------------
-# Import DB layer
+# Import convert script runner & DB layer
 # ---------------------------------------------------------------------------
+from integrate_data_fetch import run_convert_script  # noqa: E402
+
 from db.connection import (  # noqa: E402
     get_managed_connection,
     init_schema,
@@ -245,13 +247,21 @@ def _extract_doc_binary(path: str) -> str:
 
 
 def _get_file_text(fpath: str) -> str:
-    """Dispatch đọc file theo extension."""
+    """Dispatch đọc file theo extension.
+    
+    Nếu là file .doc, ưu tiên kiểm tra xem đã có file .docx tương ứng chưa.
+    """
     ext = os.path.splitext(fpath)[1].lower()
     if ext == ".docx":
         return _extract_docx(fpath)
     if ext == ".pdf":
         return _extract_pdf(fpath)
     if ext == ".doc":
+        docx_path = os.path.splitext(fpath)[0] + ".docx"
+        if os.path.exists(docx_path):
+            text = _extract_docx(docx_path)
+            if text:
+                return text
         text = _extract_docx(fpath)
         return text if text else _extract_doc_binary(fpath)
     return ""
@@ -266,6 +276,12 @@ def load_local_attachment_data(data_fetch_dir: Path) -> dict[str, dict]:
     if not data_fetch_dir.exists():
         logger.warning(f"Thư mục data_fetch không tồn tại: {data_fetch_dir}")
         return attachment_data
+
+    # Tự động convert .doc -> .docx tùy theo hệ điều hành (Windows / Linux)
+    try:
+        run_convert_script(str(data_fetch_dir))
+    except Exception as e:
+        logger.warning(f"Lỗi khi thực thi script convert_docs: {e}")
 
     found = 0
     for fname, doc_id, sig in FILE_MAPPING:
