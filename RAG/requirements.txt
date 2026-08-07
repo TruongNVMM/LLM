@@ -1,4 +1,18 @@
 psycopg2-binary
-pypdf 
-python-docx 
+pypdf
+python-docx
 markdownify
+
+# Embedding & Vector Search (Qdrant Edition)
+sentence-transformers>=3.0.0
+torch>=2.0.0
+tqdm>=4.66.0
+
+# Qdrant - Vector Database (Local Mode, no Docker needed on Windows)
+qdrant-client>=1.9.0
+
+# LangChain
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-huggingface>=0.0.3
+langchain-community>=0.2.0

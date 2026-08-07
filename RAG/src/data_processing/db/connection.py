@@ -25,10 +25,7 @@ import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Tìm và load .env file
-# ---------------------------------------------------------------------------
-
+''' Tìm và load .env file '''
 def _load_dotenv() -> None:
     """Load .env file từ thư mục gốc dự án (đi lên từ file này)."""
     # Tìm .env từ thư mục gốc dự án: src/data_processing/db/ → 3 cấp lên
@@ -70,10 +67,7 @@ def _parse_dotenv(path: Path) -> None:
 _load_dotenv()
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
+''' Config '''
 def get_db_config() -> dict[str, str | int]:
     """Đọc config kết nối PostgreSQL từ biến môi trường."""
     password = os.environ.get("POSTGRES_PASSWORD", "")
@@ -93,10 +87,7 @@ def get_db_config() -> dict[str, str | int]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Kết nối
-# ---------------------------------------------------------------------------
-
+''' Kết nối '''
 def get_connection() -> psycopg2.extensions.connection:
     """
     Tạo và trả về một connection PostgreSQL mới.
@@ -146,10 +137,7 @@ def get_managed_connection() -> Generator[psycopg2.extensions.connection, None, 
         conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Khởi tạo schema
-# ---------------------------------------------------------------------------
-
+''' Khởi tạo schema '''
 def init_schema(conn: psycopg2.extensions.connection) -> None:
     """
     Chạy schema.sql để tạo tất cả bảng và index (nếu chưa tồn tại).
@@ -190,10 +178,7 @@ def init_schema(conn: psycopg2.extensions.connection) -> None:
         raise RuntimeError(f"Lỗi khi khởi tạo schema: {e}") from e
 
 
-# ---------------------------------------------------------------------------
-# Upsert helpers
-# ---------------------------------------------------------------------------
-
+''' Upsert helpers '''
 def upsert_article(conn: psycopg2.extensions.connection, article: dict) -> None:
     """
     Insert hoặc update một bài viết vào bảng `articles`.
@@ -301,6 +286,105 @@ def upsert_chunks(conn: psycopg2.extensions.connection, chunks: list[dict]) -> N
 
     with conn.cursor() as cur:
         psycopg2.extras.execute_batch(cur, sql, params_list, page_size=100)
+
+
+''' Embedding helpers '''
+def get_unembedded_chunks(
+    conn: psycopg2.extensions.connection,
+    limit: int | None = None,
+    category_code: str | None = None,
+) -> list[dict]:
+    """
+    Trả về danh sách chunks chưa có embedding (embedding IS NULL).
+    
+    Args:
+        conn: PostgreSQL connection.
+        limit: Số lượng chunks tối đa cần lấy (None = tất cả).
+        category_code: Lọc theo mã chuyên mục (HT, HC, HB, DS, KN, HD).
+    
+    Returns:
+        List[dict] với các key: id, text, metadata.
+    """
+    conditions = ["embedded_at IS NULL"]
+    params: dict = {}
+
+    if category_code:
+        conditions.append("metadata->>'category_code' = %(category_code)s")
+        params["category_code"] = category_code
+
+    where_clause = " AND ".join(conditions)
+    limit_clause = f"LIMIT {int(limit)}" if limit else ""
+
+    sql = f"""
+        SELECT id, text, metadata
+        FROM rag_chunks
+        WHERE {where_clause}
+        ORDER BY created_at ASC
+        {limit_clause};
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def mark_chunks_as_embedded(
+    conn: psycopg2.extensions.connection,
+    chunk_ids: list[str],
+) -> int:
+    """
+    Đánh dấu các chunks đã được upsert vào Qdrant bằng cách cập nhật `embedded_at`.
+    Vector không lưu trong PostgreSQL – lưu trong Qdrant.
+
+    Args:
+        conn: PostgreSQL connection.
+        chunk_ids: Danh sách chunk ID đã upsert thành công vào Qdrant.
+
+    Returns:
+        Số rows đã được update.
+    """
+    if not chunk_ids:
+        return 0
+
+    sql = """
+        UPDATE rag_chunks
+        SET embedded_at = NOW()
+        WHERE id = %(id)s;
+    """
+    params_list = [{"id": cid} for cid in chunk_ids]
+
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, sql, params_list, page_size=200)
+
+    return len(chunk_ids)
+
+
+# Giữ tên cũ như một alias để backward-compatible
+upsert_embeddings = mark_chunks_as_embedded
+
+
+def get_embedding_stats(conn: psycopg2.extensions.connection) -> dict:
+    """
+    Trả về thống kê trạng thái embedding của bảng rag_chunks.
+    Tracking dựa trên `embedded_at` (Qdrant Edition – không có cột vector).
+
+    Returns:
+        dict với các key: total, embedded, unembedded, pct_done.
+    """
+    sql = """
+        SELECT
+            COUNT(*)                                        AS total,
+            COUNT(*) FILTER (WHERE embedded_at IS NOT NULL) AS embedded,
+            COUNT(*) FILTER (WHERE embedded_at IS NULL)     AS unembedded
+        FROM rag_chunks;
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql)
+        row = dict(cur.fetchone())
+
+    total = row["total"] or 0
+    embedded = row["embedded"] or 0
+    row["pct_done"] = round(embedded / total * 100, 1) if total else 0.0
+    return row
 
 
 def create_pipeline_run(conn: psycopg2.extensions.connection, **kwargs) -> int:
