@@ -505,6 +505,21 @@ def run_pipeline(
             # 6. Lưu vào PostgreSQL
             try:
                 upsert_article(conn, article)
+                
+                # Xóa các chunk cũ của bài viết này (nếu có từ lần chạy trước mà không còn trong bộ chunks mới)
+                parent_id = f"hust_sotay_{doc_id}"
+                if filtered_chunks:
+                    parent_id = filtered_chunks[0].get("parent_id", parent_id)
+                    valid_ids = [c["id"] for c in filtered_chunks]
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "DELETE FROM rag_chunks WHERE parent_id = %s AND id != ALL(%s)",
+                            (parent_id, valid_ids)
+                        )
+                else:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM rag_chunks WHERE parent_id = %s", (parent_id,))
+
                 upsert_chunks(conn, filtered_chunks)
                 conn.commit()
             except Exception as e:
