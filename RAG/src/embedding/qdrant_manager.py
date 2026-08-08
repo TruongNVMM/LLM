@@ -192,7 +192,7 @@ class QdrantManager:
         Returns:
             List[dict] với các key: chunk_id, score, payload.
         """
-        from qdrant_client.models import Filter, FieldCondition, MatchValue, AndCondition
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
 
         # Xây dựng filter payload
         filter_conditions = []

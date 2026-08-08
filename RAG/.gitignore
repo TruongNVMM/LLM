@@ -46,3 +46,6 @@ data/processed/
 # Temporary files
 tmp/
 temp/
+
+# Vector database
+qdrant_db/
