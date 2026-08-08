@@ -208,10 +208,17 @@ class HybridRetriever(BaseRetriever):
     # Encode query
     def _encode_query(self, query: str) -> list[float]:
         """
-        Encode câu hỏi → vector 1024d theo format E5.
-        Prefix "query: " là bắt buộc cho model multilingual-e5-large.
+        Encode câu hỏi → vector 1024d.
+        Nếu dùng model E5, cần thêm prefix "query: ".
+        Các model khác như BAAI/bge-m3 thì không cần prefix.
         """
-        prepared = "query: " + query.strip()
+        is_e5 = "e5" in self.model_name.lower()
+        
+        if is_e5:
+            prepared = "query: " + query.strip()
+        else:
+            prepared = query.strip()
+            
         return self._embed_model.embed_query(prepared)
 
     # Individual search methods

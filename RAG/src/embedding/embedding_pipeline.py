@@ -140,11 +140,17 @@ class EmbeddingPipeline:
     # Encode
     def _encode_passages(self, texts: list[str]) -> list[list[float]]:
         """
-        Encode list văn bản theo format E5 passage.
-        LangChain HuggingFaceEmbeddings gọi model.encode() bên trong.
-        Prefix "passage: " được thêm thủ công vì LangChain chưa hỗ trợ natively.
+        Encode list văn bản.
+        Nếu dùng họ model E5, cần thêm prefix "passage: ".
+        Các model khác như BAAI/bge-m3 thì không cần prefix.
         """
-        prepared = [self.PASSAGE_PREFIX + t.strip() for t in texts]
+        is_e5 = "e5" in self.model_name.lower()
+        
+        if is_e5:
+            prepared = [self.PASSAGE_PREFIX + t.strip() for t in texts]
+        else:
+            prepared = [t.strip() for t in texts]
+            
         return self.embeddings.embed_documents(prepared)
 
     # Main pipeline
