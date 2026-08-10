@@ -190,13 +190,13 @@ def upsert_article(conn: psycopg2.extensions.connection, article: dict) -> None:
             category_code, category_name, category_desc, category_order,
             source_url, time_create, status, creator_id,
             html, text, rag_text,
-            links, keywords, crawled_at
+            links, attachments, keywords, crawled_at
         ) VALUES (
             %(doc_id)s, %(title)s, %(type_doc)s,
             %(category_code)s, %(category_name)s, %(category_desc)s, %(category_order)s,
             %(source_url)s, %(time_create)s, %(status)s, %(creator_id)s,
             %(html)s, %(text)s, %(rag_text)s,
-            %(links)s, %(keywords)s, NOW()
+            %(links)s, %(attachments)s, %(keywords)s, NOW()
         )
         ON CONFLICT (doc_id) DO UPDATE SET
             title           = EXCLUDED.title,
@@ -213,6 +213,7 @@ def upsert_article(conn: psycopg2.extensions.connection, article: dict) -> None:
             text            = EXCLUDED.text,
             rag_text        = EXCLUDED.rag_text,
             links           = EXCLUDED.links,
+            attachments     = EXCLUDED.attachments,
             keywords        = EXCLUDED.keywords,
             crawled_at      = NOW();
     """
@@ -233,6 +234,7 @@ def upsert_article(conn: psycopg2.extensions.connection, article: dict) -> None:
         "text":             article.get("text", ""),
         "rag_text":         article.get("rag_text", ""),
         "links":            psycopg2.extras.Json(article.get("links", [])),
+        "attachments":      psycopg2.extras.Json(article.get("attachments", [])),
         "keywords":         psycopg2.extras.Json(article.get("keywords", {})),
     }
     with conn.cursor() as cur:
@@ -250,10 +252,10 @@ def upsert_chunks(conn: psycopg2.extensions.connection, chunks: list[dict]) -> N
     sql = """
         INSERT INTO rag_chunks (
             id, parent_id, doc_id, chunk_index, chunk_type,
-            is_attachment, attachment_name, text, metadata, created_at
+            is_attachment, attachment_name, text, content_hash, metadata, created_at
         ) VALUES (
             %(id)s, %(parent_id)s, %(doc_id)s, %(chunk_index)s, %(chunk_type)s,
-            %(is_attachment)s, %(attachment_name)s, %(text)s, %(metadata)s, NOW()
+            %(is_attachment)s, %(attachment_name)s, %(text)s, %(content_hash)s, %(metadata)s, NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
             parent_id       = EXCLUDED.parent_id,
@@ -263,7 +265,12 @@ def upsert_chunks(conn: psycopg2.extensions.connection, chunks: list[dict]) -> N
             is_attachment   = EXCLUDED.is_attachment,
             attachment_name = EXCLUDED.attachment_name,
             text            = EXCLUDED.text,
+            content_hash    = EXCLUDED.content_hash,
             metadata        = EXCLUDED.metadata,
+            embedded_at     = CASE
+                                WHEN rag_chunks.content_hash IS DISTINCT FROM EXCLUDED.content_hash THEN NULL
+                                ELSE rag_chunks.embedded_at
+                              END,
             created_at      = NOW();
     """
     params_list = []
@@ -281,6 +288,7 @@ def upsert_chunks(conn: psycopg2.extensions.connection, chunks: list[dict]) -> N
             "is_attachment":    chunk.get("is_attachment", False),
             "attachment_name":  chunk.get("attachment_name"),
             "text":             chunk.get("text", ""),
+            "content_hash":     chunk.get("metadata", {}).get("content_hash"),
             "metadata":         psycopg2.extras.Json(chunk.get("metadata", {})),
         })
 

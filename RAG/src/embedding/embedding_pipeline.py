@@ -247,11 +247,20 @@ class EmbeddingPipeline:
                     cid,
                     vec,
                     {
-                        "category_code":  meta.get("category_code", ""),
-                        "category_name":  meta.get("category_name", ""),
-                        "chunk_type":     meta.get("chunk_type", "body"),
-                        "is_attachment":  meta.get("is_attachment", False),
-                        "source_url":     meta.get("source_url", ""),
+                        # --- Filter / routing fields ---
+                        "category_code":   meta.get("category_code", ""),
+                        "category_name":   meta.get("category_name", ""),
+                        "chunk_type":      meta.get("chunk_type", "body"),
+                        "is_attachment":   meta.get("is_attachment", False),
+                        "source_url":      meta.get("source_url", ""),
+                        # --- Traceability / cite / rerank fields ---
+                        "doc_id":          meta.get("doc_id", ""),
+                        "time_create":     meta.get("time_create", ""),
+                        "content_hash":    meta.get("content_hash", ""),
+                        # --- Attachment-specific fields ---
+                        "attachment_name": meta.get("attachment_name", ""),
+                        "attachment_url":  meta.get("attachment_url", ""),
+                        "local_filename":  meta.get("local_filename", ""),
                     },
                 )
                 for cid, vec, meta in zip(chunk_ids, vectors, metadatas)

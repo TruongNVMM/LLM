@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS articles (
     text            TEXT,                        -- Text đã parse từ HTML
     rag_text        TEXT,                        -- Text tổng hợp dùng cho RAG
     links           JSONB       DEFAULT '[]',    -- Danh sách link trong bài
+    attachments     JSONB       DEFAULT '[]',    -- Danh sách file đính kèm đã chuẩn hóa
     keywords        JSONB       DEFAULT '{}',    -- Emails và tags trích xuất
     crawled_at      TIMESTAMPTZ DEFAULT NOW()    -- Thời điểm crawl lần cuối
 );
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     is_attachment   BOOLEAN     DEFAULT FALSE,   -- True nếu từ file đính kèm
     attachment_name TEXT,                        -- Tên file đính kèm (nếu có)
     text            TEXT        NOT NULL,        -- Nội dung chunk (kèm prefix tiêu đề)
+    content_hash    TEXT,                        -- Hash của nội dung chunk (để trigger re-embed)
     metadata        JSONB       DEFAULT '{}',    -- Metadata đầy đủ: source, url, category...
     embedded_at     TIMESTAMPTZ,                 -- Thời điểm đã upsert vào Qdrant (NULL = chưa embed)
     created_at      TIMESTAMPTZ DEFAULT NOW()    -- Thời điểm insert/update

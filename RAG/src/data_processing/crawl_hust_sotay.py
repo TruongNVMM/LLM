@@ -446,20 +446,6 @@ def get_meaningful_attachment_name(link: dict[str, Any]) -> str:
     return "Tài liệu đính kèm"
 
 
-def build_attachment_section(links: list[dict[str, Any]]) -> str:
-    """Build a readable section of fetched attachment content for rag_text."""
-    sections: list[str] = []
-    for link in links:
-        content = link.get("content")
-        if not content:
-            continue
-        label = get_meaningful_attachment_name(link)
-        sections.append(
-            f"[Nội dung tài liệu đính kèm: {label}]\n{content}\n[/Nội dung]"
-        )
-    return "\n\n".join(sections)
-
-
 def clean_emojis_and_symbols(value: str) -> str:
     if not value:
         return ""
@@ -648,7 +634,6 @@ def normalize_article(
                         text = re.sub(rf'\[([^\]]+)\]\({escaped_url}\)', rf'[{display_name}]({url})', text)
 
     link_text = build_link_text(links)
-    attachment_section = build_attachment_section(links) if fetch_attachments else ""
 
     rag_text = clean_text(
         "\n".join(
@@ -660,7 +645,6 @@ def normalize_article(
                 f"Cập nhật: {item.get('TimeCreate') or raw.get('TimeCreate') or ''}",
                 text,
                 link_text,
-                attachment_section,
             ]
             if part
         )
@@ -693,6 +677,7 @@ def to_rag_document(article: dict[str, Any]) -> dict[str, Any]:
         "doc_type": "hust_student_handbook_article",
         "title": article["title"],
         "text": article["rag_text"],
+        "attachments": article.get("attachments", []),
         "metadata": {
             "source": "HUST Sổ tay sinh viên",
             "source_url": article["source_url"],
@@ -703,7 +688,6 @@ def to_rag_document(article: dict[str, Any]) -> dict[str, Any]:
             "time_create": article["time_create"],
             "emails": article.get("keywords", {}).get("emails", []),
             "tags": article.get("keywords", {}).get("tags", []),
-            "links": article["links"],
         },
     }
 

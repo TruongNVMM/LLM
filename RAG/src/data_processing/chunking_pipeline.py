@@ -27,6 +27,7 @@ import json
 import re
 import sys
 import io
+import hashlib
 import unicodedata
 from pathlib import Path
 from typing import Optional
@@ -101,43 +102,6 @@ def clean_emojis_and_symbols(value: str) -> str:
     res = "".join(cleaned)
     res = re.sub(r' +', ' ', res)
     return res.strip()
-
-
-def _clean_attachment_name(name: str) -> str:
-    """Return a human-readable attachment label."""
-    name = name.strip()
-    if (name.startswith('http')
-            or name.lower().startswith('chi tiết xem tại đây')
-            or name.lower().startswith('xem tại đây')):
-        return 'Tài liệu đính kèm'
-    return name
-
-
-ATTACH_PATTERN = re.compile(
-    r'\[Nội dung tài liệu đính kèm: (?P<name>[^\]]+)\]'
-    r'(?P<content>.*?)'
-    r'\[/Nội dung\]',
-    re.DOTALL
-)
-
-
-def extract_attachments(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """
-    Strip attachment blocks from text.
-    Returns (clean_body, [(attachment_name, attachment_content), ...])
-    """
-    attachments: list[tuple[str, str]] = []
-
-    def _replace(m: re.Match) -> str:
-        attachments.append((
-            _clean_attachment_name(m.group('name')),
-            clean_emojis_and_symbols(m.group('content').strip())
-        ))
-        return ''
-
-    body = ATTACH_PATTERN.sub(_replace, text)
-    body = clean_emojis_and_symbols(re.sub(r'\n{3,}', '\n\n', body).strip())
-    return body, attachments
 
 
 # ---------------------------------------------------------------------------
@@ -310,16 +274,20 @@ def build_chunks(doc: dict) -> list[dict]:
     cat        = doc['metadata'].get('category_name', '')
     prefix     = f"Bài viết: {title} | Chuyên mục: {cat}\n"
 
-    text                = doc['text']
-    body, attachments   = extract_attachments(text)
+    text                = doc.get('text', '')
+    attachments         = doc.get('attachments', [])
     chunks_out: list[dict] = []
     chunk_idx           = 0
 
     # ── Body chunks ──────────────────────────────────────────────────────────
-    body_parts = _split_body(body)
+    body_parts = _split_body(text)
     for part in body_parts:
         if not part.strip():
             continue
+            
+        full_text = prefix + part
+        content_hash = hashlib.sha256(full_text.encode('utf-8')).hexdigest()
+        
         chunks_out.append({
             'id':              f"{doc['id']}_chunk{chunk_idx:03d}",
             'parent_id':       doc['id'],
@@ -327,18 +295,24 @@ def build_chunks(doc: dict) -> list[dict]:
             'chunk_type':      'body',
             'is_attachment':   False,
             'attachment_name': None,
-            'text':            prefix + part,
+            'text':            full_text,
             'metadata': {
                 **base_meta,
                 'chunk_index':  chunk_idx,
                 'chunk_type':   'body',
                 'is_attachment': False,
+                'content_hash': content_hash
             },
         })
         chunk_idx += 1
 
     # ── Attachment chunks ────────────────────────────────────────────────────
-    for att_name, att_content in attachments:
+    for att_chunk_idx, att in enumerate(attachments):
+        att_name = att.get('name', 'Tài liệu đính kèm')
+        att_content = att.get('content', '')
+        if not att_content:
+            continue
+            
         att_content = att_content[:MAX_ATTACHMENT_CHARS]   # hard cap
         att_parts   = _split_attachment(att_content)
         att_prefix  = (
@@ -348,6 +322,10 @@ def build_chunks(doc: dict) -> list[dict]:
         for part in att_parts:
             if not part.strip():
                 continue
+                
+            full_text = att_prefix + part
+            content_hash = hashlib.sha256(full_text.encode('utf-8')).hexdigest()
+            
             chunks_out.append({
                 'id':              f"{doc['id']}_chunk{chunk_idx:03d}",
                 'parent_id':       doc['id'],
@@ -355,13 +333,19 @@ def build_chunks(doc: dict) -> list[dict]:
                 'chunk_type':      'attachment',
                 'is_attachment':   True,
                 'attachment_name': att_name,
-                'text':            att_prefix + part,
+                'text':            full_text,
                 'metadata': {
                     **base_meta,
-                    'chunk_index':   chunk_idx,
                     'chunk_type':    'attachment',
                     'is_attachment': True,
+                    'attachment_id': att.get('attachment_id'),
                     'attachment_name': att_name,
+                    'attachment_url': att.get('url'),
+                    'local_filename': att.get('local_filename'),
+                    'source_link_index': att.get('link_index'),
+                    'fetch_status': att.get('fetch_status'),
+                    'content_hash': content_hash,
+                    'attachment_chunk_index': att_chunk_idx
                 },
             })
             chunk_idx += 1
@@ -376,8 +360,6 @@ def build_chunks(doc: dict) -> list[dict]:
 def main() -> None:
     all_chunks:             list[dict] = []
     docs_processed:         int        = 0
-    seen_attachment_hashes: set[int]   = set()
-    dedup_count:            int        = 0
     hard_cut_fixed:         int        = 0
 
     with open(INPUT_FILE, 'r', encoding='utf-8') as f:
@@ -388,19 +370,7 @@ def main() -> None:
             doc    = json.loads(line)
             chunks = build_chunks(doc)
 
-            # Deduplicate identical attachment content across documents
-            filtered: list[dict] = []
-            for chunk in chunks:
-                if chunk['is_attachment']:
-                    content_body = chunk['text'].split('\n\n', 1)[-1].strip()
-                    content_hash = hash(content_body)
-                    if content_hash in seen_attachment_hashes:
-                        dedup_count += 1
-                        continue
-                    seen_attachment_hashes.add(content_hash)
-                filtered.append(chunk)
-
-            all_chunks.extend(filtered)
+            all_chunks.extend(chunks)
             docs_processed += 1
 
     # ── Count hard-cut fixes (post-merge applied inside build_chunks) ─────────
@@ -427,7 +397,6 @@ def main() -> None:
     print(f"   Tổng chunks đầu ra : {len(all_chunks)}")
     print(f"     - Body chunks    : {len(body_chunks)}")
     print(f"     - Attach chunks  : {len(att_chunks)}")
-    print(f"     - Đã dedup       : {dedup_count} attachment chunks")
     print(f"   Độ dài chunk:")
     print(f"     - Trung bình     : {sum(lengths)/len(lengths):.0f} chars")
     print(f"     - Lớn nhất       : {max(lengths)} chars")

@@ -35,6 +35,7 @@ Cấu hình (file .env hoặc biến môi trường):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import logging
@@ -141,7 +142,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Cấu hình
 # ---------------------------------------------------------------------------
-DEFAULT_DATA_FETCH_DIR = Path("data_fetch")
+_THIS_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_FETCH_DIR = _THIS_DIR / "data_fetch"
 
 # Mapping: tên file → (doc_id, chữ ký URL để match với link trong bài)
 # Lấy từ integrate_data_fetch.py, cập nhật tại đây khi có file mới
@@ -315,7 +317,6 @@ def enrich_article_with_local_files(
     if not attachment_data:
         return article
 
-    attached_sections: list[str] = []
     rag_text: str = article.get("rag_text", "")
 
     for link in article.get("links", []):
@@ -327,10 +328,6 @@ def enrich_article_with_local_files(
                 link["local_filename"] = item["filename"]
 
                 if item["text"]:
-                    attached_sections.append(
-                        f"[Nội dung tài liệu đính kèm: {item['filename']}]\n"
-                        f"{item['text']}\n[/Nội dung]"
-                    )
                     # Rewrite anchor text trong rag_text để LLM rõ đây là biểu mẫu
                     old_link = f"[{link['anchor_text']}]({url})"
                     new_link = f"[Biểu mẫu đính kèm: {item['filename']}]({url})"
@@ -344,12 +341,6 @@ def enrich_article_with_local_files(
                             rag_text,
                         )
                 break  # Mỗi link chỉ match 1 file
-
-    # Nối nội dung file đính kèm vào rag_text
-    if attached_sections:
-        extra = "\n\n" + "\n\n".join(attached_sections)
-        if extra not in rag_text:
-            rag_text += extra
 
     article["rag_text"] = clean_text(rag_text)
     return article
@@ -437,7 +428,7 @@ def run_pipeline(
         total_articles = 0
         total_chunks = 0
         attachment_stats: dict[str, int] = {}
-        seen_attachment_hashes: set[int] = set()
+
 
         for idx, raw in enumerate(handbook_items, start=1):
             doc_id = raw.get("DocumentID", "?")
@@ -483,6 +474,26 @@ def run_pipeline(
             if enrich_local and attachment_data:
                 article = enrich_article_with_local_files(article, attachment_data)
 
+            # 3.5. Build attachments list
+            attachments = []
+            for i, link in enumerate(article.get("links", [])):
+                if link.get("fetch_status") == "ok" and link.get("content"):
+                    url = link.get("url", "")
+                    content = link.get("content", "")
+                    att_id = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+                    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    attachments.append({
+                        "attachment_id": att_id,
+                        "name": link.get("local_filename") or link.get("anchor_text") or "Tài liệu đính kèm",
+                        "url": url,
+                        "local_filename": link.get("local_filename", ""),
+                        "link_index": i,
+                        "fetch_status": "ok",
+                        "content": content,
+                        "content_hash": content_hash,
+                    })
+            article["attachments"] = attachments
+
             title = article.get("title", doc_id)
 
             # 4. Build RAG document
@@ -491,26 +502,15 @@ def run_pipeline(
             # 5. Chunk
             chunks = build_chunks(rag_doc)
 
-            # Deduplication cho attachment chunks (giống chunking_pipeline.py)
-            filtered_chunks: list[dict] = []
-            for chunk in chunks:
-                if chunk.get("is_attachment"):
-                    content_body = chunk["text"].split("\n\n", 1)[-1].strip()
-                    content_hash = hash(content_body)
-                    if content_hash in seen_attachment_hashes:
-                        continue
-                    seen_attachment_hashes.add(content_hash)
-                filtered_chunks.append(chunk)
-
             # 6. Lưu vào PostgreSQL
             try:
                 upsert_article(conn, article)
                 
                 # Xóa các chunk cũ của bài viết này (nếu có từ lần chạy trước mà không còn trong bộ chunks mới)
                 parent_id = f"hust_sotay_{doc_id}"
-                if filtered_chunks:
-                    parent_id = filtered_chunks[0].get("parent_id", parent_id)
-                    valid_ids = [c["id"] for c in filtered_chunks]
+                if chunks:
+                    parent_id = chunks[0].get("parent_id", parent_id)
+                    valid_ids = [c["id"] for c in chunks]
                     with conn.cursor() as cur:
                         cur.execute(
                             "DELETE FROM rag_chunks WHERE parent_id = %s AND id != ALL(%s)",
@@ -520,7 +520,7 @@ def run_pipeline(
                     with conn.cursor() as cur:
                         cur.execute("DELETE FROM rag_chunks WHERE parent_id = %s", (parent_id,))
 
-                upsert_chunks(conn, filtered_chunks)
+                upsert_chunks(conn, chunks)
                 conn.commit()
             except Exception as e:
                 conn.rollback()
@@ -528,12 +528,12 @@ def run_pipeline(
                 continue
 
             total_articles += 1
-            total_chunks += len(filtered_chunks)
+            total_chunks += len(chunks)
 
             if verbose or idx % 10 == 0 or idx == total_handbook:
                 logger.info(
                     f"[{idx:3d}/{total_handbook}] ✓ {title[:50]!r} "
-                    f"→ {len(filtered_chunks)} chunks"
+                    f"→ {len(chunks)} chunks"
                 )
 
         # ── Hoàn thành pipeline run ──────────────────────────────────────────
