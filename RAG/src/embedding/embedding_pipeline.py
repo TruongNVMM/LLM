@@ -180,6 +180,14 @@ class EmbeddingPipeline:
             get_embedding_stats,
         )
 
+        # Nếu cờ recreate_collection được bật, reset cờ embedded_at về NULL cho toàn bộ DB
+        if self.recreate_collection:
+            logger.warning("Đã chọn --recreate-collection: Reset cờ embedded_at cho toàn bộ chunks trong PostgreSQL...")
+            with get_managed_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE rag_chunks SET embedded_at = NULL")
+                conn.commit()
+
         # 1. Thống kê ban đầu
         with get_managed_connection() as conn:
             stats = get_embedding_stats(conn)
