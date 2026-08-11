@@ -49,3 +49,9 @@ temp/
 
 # Vector database
 qdrant_db/
+
+# File code 
+pipeline_to_jsonl.py
+
+# Documents
+docs/

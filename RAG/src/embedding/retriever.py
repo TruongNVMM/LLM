@@ -406,7 +406,7 @@ class HybridRetriever(BaseRetriever):
         top_k: int | None = None,
         category_code: str | None = None,
     ) -> list[RetrievalResult]:
-        """Pure Full-Text Search (chỉ PostgreSQL)."""
+        """Pure Full-Text Search (႕ỉ PostgreSQL)."""
         k = top_k or self.top_k
         ids = self._text_search_ids(query, k, category_code, chunk_type=None)
         chunks_data = self._fetch_chunks_by_ids(ids)
@@ -423,6 +423,309 @@ class HybridRetriever(BaseRetriever):
             for r, cid in enumerate(ids)
             if cid in chunks_data
         ]
+
+    # ── Parent-child retrieval helpers ────────────────────────────────────────
+
+    def _fetch_neighbor_chunks(
+        self,
+        parent_id: str,
+        chunk_index: int,
+        window: int = 1,
+        exclude_types: list[str] | None = None,
+    ) -> list[dict]:
+        """
+        Lấy tối đa 'window' chunks trước và sau chunk_index cùng parent_id.
+        Bỏ qua summary chunks (chỉ lấy body và attachment).
+
+        Args:
+            parent_id: ID bài viết cha (ví dụ: 'hust_sotay_69').
+            chunk_index: Index của hit chunk.
+            window: Số chunk lấy thêm mỗi phía (±1 mặc định).
+            exclude_types: Loại chunk cần bỏ qua (mặc định: ['summary']).
+        """
+        import psycopg2.extras
+        from src.data_processing.db.connection import get_managed_connection
+
+        excl = exclude_types or ['summary']
+        excl_sql = ', '.join(f"'{t}'" for t in excl)
+
+        sql = f"""
+            SELECT id, text, metadata,
+                   (metadata->>'chunk_index')::int AS cidx
+            FROM rag_chunks
+            WHERE metadata->>'doc_id' = %(parent_id)s::text
+              AND (metadata->>'chunk_index')::int
+                  BETWEEN %(lo)s AND %(hi)s
+              AND chunk_type NOT IN ({excl_sql})
+              AND embedded_at IS NOT NULL
+            ORDER BY cidx;
+        """
+        with get_managed_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, {
+                    'parent_id': parent_id,
+                    'lo': chunk_index - window,
+                    'hi': chunk_index + window,
+                })
+                return [dict(row) for row in cur.fetchall()]
+
+    def _fetch_attachment_chunks(
+        self,
+        parent_id: str,
+        attachment_name: str,
+        chunk_index: int | None = None,
+        window: int | None = None,
+    ) -> list[dict]:
+        """
+        Lấy chunks của một attachment.
+
+        - Nếu window=None: lấy toàn bộ attachment (dùng khi attachment ngắn).
+        - Nếu window có giá trị: lấy ±window xung quanh chunk_index (attachment dài).
+        """
+        import psycopg2.extras
+        from src.data_processing.db.connection import get_managed_connection
+
+        if window is not None and chunk_index is not None:
+            sql = """
+                SELECT id, text, metadata,
+                       (metadata->>'chunk_index')::int AS cidx
+                FROM rag_chunks
+                WHERE metadata->>'doc_id' = %(parent_id)s::text
+                  AND metadata->>'attachment_name' = %(att_name)s::text
+                  AND chunk_type = 'attachment'
+                  AND (metadata->>'chunk_index')::int
+                      BETWEEN %(lo)s AND %(hi)s
+                  AND embedded_at IS NOT NULL
+                ORDER BY cidx;
+            """
+            params = {
+                'parent_id': parent_id,
+                'att_name':  attachment_name,
+                'lo': chunk_index - window,
+                'hi': chunk_index + window,
+            }
+        else:
+            sql = """
+                SELECT id, text, metadata,
+                       (metadata->>'chunk_index')::int AS cidx
+                FROM rag_chunks
+                WHERE metadata->>'doc_id' = %(parent_id)s::text
+                  AND metadata->>'attachment_name' = %(att_name)s::text
+                  AND chunk_type = 'attachment'
+                  AND embedded_at IS NOT NULL
+                ORDER BY cidx;
+            """
+            params = {'parent_id': parent_id, 'att_name': attachment_name}
+
+        with get_managed_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, params)
+                return [dict(row) for row in cur.fetchall()]
+
+    def _count_attachment_chunks(
+        self,
+        parent_id: str,
+        attachment_name: str,
+    ) -> int:
+        """Dem số content chunks của một attachment."""
+        import psycopg2.extras
+        from src.data_processing.db.connection import get_managed_connection
+
+        sql = """
+            SELECT COUNT(*) AS cnt
+            FROM rag_chunks
+            WHERE metadata->>'doc_id' = %(parent_id)s::text
+              AND metadata->>'attachment_name' = %(att_name)s::text
+              AND chunk_type = 'attachment'
+              AND embedded_at IS NOT NULL;
+        """
+        with get_managed_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, {'parent_id': parent_id, 'att_name': attachment_name})
+                return cur.fetchone()['cnt']
+
+    def _fetch_parent_content_chunks(
+        self,
+        parent_id: str,
+    ) -> list[dict]:
+        """Lấy tất cả content chunks (body + attachment) của một bài (dùng khi hit summary chunk)."""
+        import psycopg2.extras
+        from src.data_processing.db.connection import get_managed_connection
+
+        sql = """
+            SELECT id, text, metadata,
+                   (metadata->>'chunk_index')::int AS cidx
+            FROM rag_chunks
+            WHERE metadata->>'doc_id' = %(parent_id)s::text
+              AND chunk_type IN ('body', 'attachment')
+              AND embedded_at IS NOT NULL
+            ORDER BY cidx
+            LIMIT 10;
+        """
+        with get_managed_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, {'parent_id': parent_id})
+                return [dict(row) for row in cur.fetchall()]
+
+    def _rows_to_results(
+        self,
+        rows: list[dict],
+        base_score: float = 0.0,
+        source: str = 'expand',
+    ) -> list[RetrievalResult]:
+        """Chuyển DB rows thành RetrievalResult."""
+        results = []
+        for row in rows:
+            results.append(RetrievalResult(
+                chunk_id    = row['id'],
+                text        = row['text'],
+                score       = base_score,
+                vector_rank = None,
+                text_rank   = None,
+                metadata    = dict(row.get('metadata') or {}),
+            ))
+        return results
+
+    def expand_with_parent_context(
+        self,
+        results: list[RetrievalResult],
+        att_short_threshold: int = 5,
+        body_window: int = 1,
+        att_window: int = 1,
+    ) -> list[RetrievalResult]:
+        """
+        Parent-child retrieval expansion (Strategy 5).
+
+        Rules:
+          - body chunk hit    : lấy ±body_window chunks cùng doc_id
+          - attachment hit    : nếu attachment ≤ att_short_threshold chunks
+                                  → lấy toàn bộ attachment
+                                nếu dài → lấy ±att_window chunk cùng attachment_name
+          - summary hit       : expand sang các content chunks cùng parent_id
+
+        Kết quả: deduplicate + sort theo chunk_index để LLM thấy nội dung liền mạch.
+
+        Args:
+            results: Danh sách hit từ search().
+            att_short_threshold: Số chunks để cói attachment là 'ngắn' (lấy toàn bộ).
+            body_window: Số chunk lấy thêm mỗi phía cho body chunk.
+            att_window: Số chunk lấy thêm mỗi phía cho attachment chunk dài.
+
+        Returns:
+            List[RetrievalResult] deduplicated + sorted by chunk_index.
+        """
+        seen_ids: set[str] = set()
+        expanded: list[RetrievalResult] = []
+
+        for hit in results:
+            chunk_type  = hit.metadata.get('chunk_type', 'body')
+            parent_id   = hit.metadata.get('doc_id', '')
+            chunk_index = hit.metadata.get('chunk_index', 0)
+            att_name    = hit.metadata.get('attachment_name', '')
+
+            # --- Add the hit itself first ---
+            if hit.chunk_id not in seen_ids:
+                expanded.append(hit)
+                seen_ids.add(hit.chunk_id)
+
+            try:
+                if chunk_type == 'body':
+                    # Lấy ±1 body chunk cùng doc
+                    rows = self._fetch_neighbor_chunks(
+                        parent_id, chunk_index, window=body_window
+                    )
+                    for r in self._rows_to_results(rows, base_score=hit.score * 0.8):
+                        if r.chunk_id not in seen_ids:
+                            expanded.append(r)
+                            seen_ids.add(r.chunk_id)
+
+                elif chunk_type == 'attachment' and att_name and parent_id:
+                    # Kiểm tra attachment dài hay ngắn
+                    total = self._count_attachment_chunks(parent_id, att_name)
+                    if total <= att_short_threshold:
+                        # Ngắn → lấy toàn bộ
+                        rows = self._fetch_attachment_chunks(parent_id, att_name)
+                    else:
+                        # Dài → lấy ±att_window
+                        rows = self._fetch_attachment_chunks(
+                            parent_id, att_name, chunk_index=chunk_index, window=att_window
+                        )
+                    for r in self._rows_to_results(rows, base_score=hit.score * 0.8):
+                        if r.chunk_id not in seen_ids:
+                            expanded.append(r)
+                            seen_ids.add(r.chunk_id)
+
+                elif chunk_type == 'summary':
+                    # Summary hit → expand sang content chunks cùng parent
+                    if att_name:
+                        # Summary của attachment → lấy toàn bộ attachment
+                        rows = self._fetch_attachment_chunks(parent_id, att_name)
+                    else:
+                        # Summary của bài viết → lấy các body chunks đầu tiên
+                        rows = self._fetch_parent_content_chunks(parent_id)
+                    for r in self._rows_to_results(rows, base_score=hit.score * 0.9):
+                        if r.chunk_id not in seen_ids:
+                            expanded.append(r)
+                            seen_ids.add(r.chunk_id)
+
+            except Exception as e:
+                logger.warning(f"expand_with_parent_context failed for {hit.chunk_id}: {e}")
+                continue
+
+        # Deduplicate + sort by chunk_index để LLM thấy nội dung liền mạch
+        def _sort_key(r: RetrievalResult) -> tuple:
+            idx = r.metadata.get('chunk_index', 9999)
+            doc = r.metadata.get('doc_id', '')
+            return (doc, idx)
+
+        expanded.sort(key=_sort_key)
+        return expanded
+
+    def search_with_expansion(
+        self,
+        query: str,
+        top_k: int | None = None,
+        candidate_k: int | None = None,
+        category_code: str | None = None,
+        att_short_threshold: int = 5,
+        body_window: int = 1,
+        att_window: int = 1,
+    ) -> list[RetrievalResult]:
+        """
+        Hybrid Search + Parent-Child Expansion.
+
+        Bước 1: Hybrid search (Qdrant + Postgres + RRF) trên tất cả chunk types.
+        Bước 2: Với mỗi hit, expand ra parent context theo rule:
+               - body   → ±body_window chunks cùng doc
+               - attach → toàn bộ attachment (nếu ngắn) hoặc ±att_window
+               - summary→ các content chunks cùng parent
+        Bước 3: Deduplicate + sort theo chunk_index.
+
+        Args:
+            query: Câu hỏi người dùng.
+            top_k: Số hit ban đầu cần lấy.
+            candidate_k: Số candidates cho mỗi search engine.
+            category_code: Lọc theo chuyên mục.
+            att_short_threshold: attachment ≤ N chunks → lấy toàn bộ.
+            body_window: Neighbors cho body chunk.
+            att_window: Neighbors cho attachment chunk dài.
+
+        Returns:
+            List[RetrievalResult] đã expand và sắp xếp.
+        """
+        hits = self.search(
+            query,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            category_code=category_code,
+        )
+        return self.expand_with_parent_context(
+            hits,
+            att_short_threshold=att_short_threshold,
+            body_window=body_window,
+            att_window=att_window,
+        )
+
 
     # LangChain BaseRetriever interface
     def _get_relevant_documents(
@@ -485,8 +788,8 @@ if __name__ == "__main__":
         "--category", choices=["HT", "HC", "HB", "DS", "KN", "HD"], default=None
     )
     parser.add_argument(
-        "--mode", choices=["hybrid", "vector", "text"], default="hybrid",
-        help="Chế độ tìm kiếm"
+        "--mode", choices=["hybrid", "vector", "text", "expand"], default="hybrid",
+        help="Chế độ tìm kiếm (expand = hybrid + parent-child expansion)"
     )
     args = parser.parse_args()
 
@@ -501,7 +804,28 @@ if __name__ == "__main__":
         results = retriever.search(args.query, category_code=args.category)
     elif args.mode == "vector":
         results = retriever.vector_search(args.query, category_code=args.category)
-    else:
+    elif args.mode == "text":
         results = retriever.text_search(args.query, category_code=args.category)
+    else:  # expand
+        results = retriever.search_with_expansion(
+            args.query, top_k=args.top_k, category_code=args.category
+        )
 
-    retriever.print_results(results)
+    if not results:
+        print("Không tìm thấy kết quả phù hợp.")
+    else:
+        for i, r in enumerate(results, 1):
+            chunk_type = r.metadata.get('chunk_type', '?')
+            print(f"\n{'='*65}")
+            print(
+                f"[{i}] RRF={r.score:.5f}  "
+                f"| type={chunk_type:10s} "
+                f"| v_rank={r.vector_rank}  t_rank={r.text_rank}"
+            )
+            print(f"     Category : {r.category}")
+            print(f"     Chunk ID : {r.chunk_id}")
+            print(f"     URL      : {r.source_url}")
+            preview = r.text[:350].replace("\n", " ")
+            print(f"     Preview  : {preview}{'...' if len(r.text) > 350 else ''}")
+        print(f"\n{'='*65}")
+        print(f"Tổng kết quả: {len(results)}")

@@ -253,14 +253,20 @@ class EmbeddingPipeline:
                         "chunk_type":      meta.get("chunk_type", "body"),
                         "is_attachment":   meta.get("is_attachment", False),
                         "source_url":      meta.get("source_url", ""),
+                        # --- Parent-child retrieval fields ---
+                        "parent_id":       meta.get("doc_id", ""),
+                        "chunk_index":     meta.get("chunk_index", 0),
+                        "section_header":  meta.get("section_header", ""),
                         # --- Traceability / cite / rerank fields ---
                         "doc_id":          meta.get("doc_id", ""),
                         "time_create":     meta.get("time_create", ""),
                         "content_hash":    meta.get("content_hash", ""),
-                        # --- Attachment-specific fields ---
-                        "attachment_name": meta.get("attachment_name", ""),
-                        "attachment_url":  meta.get("attachment_url", ""),
-                        "local_filename":  meta.get("local_filename", ""),
+                        # --- Attachment-specific fields (Mục 7) ---
+                        "attachment_name":        meta.get("attachment_name", ""),
+                        "attachment_url":         meta.get("attachment_url", ""),
+                        "local_filename":         meta.get("local_filename", ""),
+                        "attachment_index":       meta.get("attachment_index", -1),
+                        "attachment_chunk_index": meta.get("attachment_chunk_index", -1),
                     },
                 )
                 for cid, vec, meta in zip(chunk_ids, vectors, metadatas)
