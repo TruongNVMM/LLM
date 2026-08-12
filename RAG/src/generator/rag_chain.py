@@ -15,7 +15,7 @@ class RAGChainConfig:
     candidate_k: int = 60
     model: str = "qwen2.5:7b"
     base_url: str = "http://localhost:11434"
-    max_context_chars: int = 6000
+    max_context_chars: int = 12000
     temperature: float = 0.1
 
 class RAGChain:

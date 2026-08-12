@@ -13,9 +13,12 @@ Quy tắc bắt buộc:
 2. CHỈ sử dụng thông tin có trong phần [TÀI LIỆU THAM KHẢO]. Không tự bịa đặt hoặc suy diễn ngoài tài liệu.
 3. Nếu tài liệu không chứa thông tin để trả lời câu hỏi, hãy nói rõ: "Xin lỗi, hiện tại mình không tìm thấy thông tin về vấn đề này trong sổ tay sinh viên."
 4. Trình bày câu trả lời rõ ràng, dùng bullet points hoặc in đậm những ý chính nếu cần.
-5. Cuối câu trả lời, hãy trích dẫn nguồn ngắn gọn (Ví dụ: Nguồn: Hướng dẫn đăng ký học tập)."""
+5. Cuối câu trả lời, hãy trích dẫn nguồn ngắn gọn (Ví dụ: Nguồn: Hướng dẫn đăng ký học tập).
+6. Nếu tài liệu tham khảo chứa nội dung mẫu đơn/biểu mẫu (có cụm "CỘNG HÒA", "Kính gửi", "Họ và tên"...), hãy hiển thị toàn bộ nội dung mẫu đó trong câu trả lời (dưới dạng markdown/plain text), KHÔNG chỉ đưa link.
+7. Nếu câu hỏi hỏi về một loại học bổng cụ thể (ví dụ "loại A"), hãy tổng hợp TẤT CẢ thông tin có trong tài liệu: mức tiền, điều kiện, tỷ lệ, cách xét...
+8. Nếu trong tài liệu có link SharePoint/Google Drive, chỉ đưa link khi không có nội dung thực trong context. Ưu tiên hiển thị nội dung thực trước link."""
 
-    def __init__(self, system_prompt: str = None, max_context_chars: int = 4000):
+    def __init__(self, system_prompt: str = None, max_context_chars: int = 12000):
         self.system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
         self.max_context_chars = max_context_chars
 
@@ -28,7 +31,7 @@ Quy tắc bắt buộc:
         Ghép ngữ cảnh từ tài liệu và câu hỏi của người dùng thành prompt hoàn chỉnh.
         `context_docs` là danh sách các đối tượng RetrievalResult.
         """
-        context_str = self._format_context(context_docs)
+        context_str = self._format_context(context_docs, query=query)
         
         prompt = f"""[TÀI LIỆU THAM KHẢO]
 {context_str}
@@ -38,11 +41,16 @@ Quy tắc bắt buộc:
 """
         return prompt
 
-    def _format_context(self, docs: List[Any]) -> str:
+    def _format_context(self, docs: List[Any], query: str = "") -> str:
         """Định dạng các chunk tài liệu thành chuỗi văn bản."""
         if not docs:
             return "Không có tài liệu tham khảo nào."
             
+        # Sắp xếp attachment lên đầu nếu hỏi về biểu mẫu
+        q_lower = query.lower()
+        if any(kw in q_lower for kw in ["mẫu", "đơn", "biểu mẫu"]):
+            docs = sorted(docs, key=lambda d: 0 if d.metadata.get("chunk_type") == "attachment" else 1)
+
         parts = []
         current_len = 0
         

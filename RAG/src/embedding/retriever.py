@@ -633,6 +633,30 @@ class HybridRetriever(BaseRetriever):
                 cur.execute(sql, {'parent_id': parent_id})
                 return [dict(row) for row in cur.fetchall()]
 
+    def _fetch_first_attachment_chunks(
+        self,
+        parent_id: str,
+        max_chunks: int = 3,
+    ) -> list[dict]:
+        """Lấy một số chunk đầu tiên của attachment đầu tiên trong bài viết."""
+        import psycopg2.extras
+        from src.data_processing.db.connection import get_managed_connection
+
+        sql = """
+            SELECT id, text, metadata,
+                   (metadata->>'chunk_index')::int AS cidx
+            FROM rag_chunks
+            WHERE metadata->>'doc_id' = %(parent_id)s::text
+              AND chunk_type = 'attachment'
+              AND embedded_at IS NOT NULL
+            ORDER BY (metadata->>'attachment_index')::int, cidx
+            LIMIT %(limit)s;
+        """
+        with get_managed_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, {'parent_id': parent_id, 'limit': max_chunks})
+                return [dict(row) for row in cur.fetchall()]
+
     def _rows_to_results(
         self,
         rows: list[dict],
@@ -655,6 +679,7 @@ class HybridRetriever(BaseRetriever):
     def expand_with_parent_context(
         self,
         results: list[RetrievalResult],
+        query: str = "",
         att_short_threshold: int = 5,
         body_window: int = 1,
         att_window: int = 1,
@@ -704,6 +729,15 @@ class HybridRetriever(BaseRetriever):
                         if r.chunk_id not in seen_ids:
                             expanded.append(r)
                             seen_ids.add(r.chunk_id)
+
+                    # QUERY-AWARE: Nếu query hỏi về học bổng hoặc biểu mẫu, kéo thêm attachment
+                    q_lower = query.lower()
+                    if ("học bổng" in q_lower or "loại" in q_lower or "mẫu" in q_lower or "đơn" in q_lower or "quy định" in q_lower) and parent_id:
+                        att_rows = self._fetch_first_attachment_chunks(parent_id, max_chunks=3)
+                        for r in self._rows_to_results(att_rows, base_score=hit.score * 0.7):
+                            if r.chunk_id not in seen_ids:
+                                expanded.append(r)
+                                seen_ids.add(r.chunk_id)
 
                 elif chunk_type == 'attachment' and att_name and parent_id:
                     # Kiểm tra attachment dài hay ngắn
@@ -787,6 +821,7 @@ class HybridRetriever(BaseRetriever):
         )
         return self.expand_with_parent_context(
             hits,
+            query=query,
             att_short_threshold=att_short_threshold,
             body_window=body_window,
             att_window=att_window,
@@ -816,6 +851,7 @@ class HybridRetriever(BaseRetriever):
         )
         return self.expand_with_parent_context(
             hits,
+            query=query,
             att_short_threshold=att_short_threshold,
             body_window=body_window,
             att_window=att_window,

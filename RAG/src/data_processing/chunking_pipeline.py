@@ -734,6 +734,11 @@ def _build_att_summary(doc: dict, att: dict) -> str | None:
     if emails:
         lines.append(f"Liên hệ: {', '.join(emails[:2])}.")
 
+    content_snippet = att.get('content', '')[:150].strip()
+    if content_snippet:
+        content_snippet = re.sub(r'\s+', ' ', content_snippet)
+        lines.append(f"Nội dung: {content_snippet}...")
+
     return '\n'.join(lines)
 
 
