@@ -155,6 +155,12 @@ class HybridRetriever(BaseRetriever):
     top_k:       int = 5
     candidate_k: int = 20
     rrf_k:       int = 60
+    rerank_enabled: bool = False
+    rerank_model_name: str = "BAAI/bge-reranker-v2-m3"
+    rerank_top_k: int = 5
+    rerank_candidate_k: int = 50
+    rerank_batch_size: int = 16
+    rerank_max_length: int = 512
 
     # Các thuộc tính private (Pydantic v1 trong LangChain dùng _ prefix)
     class Config:
@@ -166,6 +172,7 @@ class HybridRetriever(BaseRetriever):
         # Store private state as object attributes
         object.__setattr__(self, '_embeddings_model', None)
         object.__setattr__(self, '_qdrant_mgr', None)
+        object.__setattr__(self, '_reranker_model', None)
         object.__setattr__(self, '_device', None)
 
     @property
@@ -204,6 +211,24 @@ class HybridRetriever(BaseRetriever):
         mgr = QdrantManager()
         object.__setattr__(self, '_qdrant_mgr', mgr)
         return mgr
+
+    @property
+    def _reranker(self):
+        if object.__getattribute__(self, '_reranker_model') is not None:
+            return object.__getattribute__(self, '_reranker_model')
+
+        from src.embedding.reranker import BGEReranker, RerankerConfig
+
+        reranker = BGEReranker(
+            RerankerConfig(
+                model_name=self.rerank_model_name,
+                device=object.__getattribute__(self, '_device'),
+                max_length=self.rerank_max_length,
+                batch_size=self.rerank_batch_size,
+            )
+        )
+        object.__setattr__(self, '_reranker_model', reranker)
+        return reranker
 
     # Encode query
     def _encode_query(self, query: str) -> list[float]:
@@ -368,6 +393,32 @@ class HybridRetriever(BaseRetriever):
             ))
 
         return results
+
+    def search_with_rerank(
+        self,
+        query: str,
+        top_k: int | None = None,
+        candidate_k: int | None = None,
+        category_code: str | None = None,
+        chunk_type: str | None = None,
+    ) -> list[RetrievalResult]:
+        """
+        Hybrid Search + BGE reranking.
+
+        Candidate generation still uses Qdrant + Postgres + RRF. The reranker
+        then scores each query/chunk pair and returns the highest-scoring hits.
+        """
+        final_k = top_k or self.rerank_top_k or self.top_k
+        cand_k = candidate_k or self.rerank_candidate_k or self.candidate_k
+
+        candidates = self.search(
+            query,
+            top_k=cand_k,
+            candidate_k=cand_k,
+            category_code=category_code,
+            chunk_type=chunk_type,
+        )
+        return self._reranker.rerank(query, candidates, top_k=final_k)
 
     def vector_search(
         self,
@@ -726,6 +777,35 @@ class HybridRetriever(BaseRetriever):
             att_window=att_window,
         )
 
+    def search_with_rerank_and_expansion(
+        self,
+        query: str,
+        top_k: int | None = None,
+        candidate_k: int | None = None,
+        category_code: str | None = None,
+        att_short_threshold: int = 5,
+        body_window: int = 1,
+        att_window: int = 1,
+    ) -> list[RetrievalResult]:
+        """
+        Hybrid Search + BGE reranking + Parent-Child Expansion.
+
+        Reranking is applied before expansion so the cross-encoder only scores
+        the compact candidate pool produced by hybrid search.
+        """
+        hits = self.search_with_rerank(
+            query,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            category_code=category_code,
+        )
+        return self.expand_with_parent_context(
+            hits,
+            att_short_threshold=att_short_threshold,
+            body_window=body_window,
+            att_window=att_window,
+        )
+
 
     # LangChain BaseRetriever interface
     def _get_relevant_documents(
@@ -742,7 +822,10 @@ class HybridRetriever(BaseRetriever):
             chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
             chain.invoke("câu hỏi")
         """
-        results = self.search(query)
+        if self.rerank_enabled:
+            results = self.search_with_rerank(query)
+        else:
+            results = self.search(query)
         return [r.to_document() for r in results]
 
     # Utility
@@ -779,8 +862,8 @@ if __name__ == "__main__":
         description="Test HUST RAG Hybrid Retriever (Qdrant + Postgres + RRF)"
     )
     parser.add_argument(
-        "query", nargs="?", default="điều kiện đăng ký học lại",
-        help="Câu hỏi cần tìm kiếm"
+        "query", nargs="?", default="dieu kien dang ky hoc lai",
+        help="Query text to search.",
     )
     parser.add_argument("--top-k",    type=int, default=5)
     parser.add_argument("--candidate-k", type=int, default=20)
@@ -788,8 +871,8 @@ if __name__ == "__main__":
         "--category", choices=["HT", "HC", "HB", "DS", "KN", "HD"], default=None
     )
     parser.add_argument(
-        "--mode", choices=["hybrid", "vector", "text", "expand"], default="hybrid",
-        help="Chế độ tìm kiếm (expand = hybrid + parent-child expansion)"
+        "--mode", choices=["hybrid", "vector", "text", "rerank", "expand", "rerank-expand"], default="hybrid",
+        help="Search mode (rerank = hybrid + BGE reranker).",
     )
     args = parser.parse_args()
 
@@ -806,6 +889,14 @@ if __name__ == "__main__":
         results = retriever.vector_search(args.query, category_code=args.category)
     elif args.mode == "text":
         results = retriever.text_search(args.query, category_code=args.category)
+    elif args.mode == "rerank":
+        results = retriever.search_with_rerank(
+            args.query, top_k=args.top_k, category_code=args.category
+        )
+    elif args.mode == "rerank-expand":
+        results = retriever.search_with_rerank_and_expansion(
+            args.query, top_k=args.top_k, category_code=args.category
+        )
     else:  # expand
         results = retriever.search_with_expansion(
             args.query, top_k=args.top_k, category_code=args.category

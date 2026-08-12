@@ -136,3 +136,35 @@ SELECT id, chunk_type, left(text, 200) FROM rag_chunks LIMIT 3;
 - [`integrate_data_fetch.py`](src/data_processing/integrate_data_fetch.py): Enrich JSONL với file cục bộ (standalone)
 
 Các script trên vẫn hoạt động độc lập. `pipeline.py` tái sử dụng logic từ chúng và thêm lưu trực tiếp vào PostgreSQL.
+
+## Hybrid Search + Reranking
+
+Retriever supports an optional cross-encoder reranking step using
+`BAAI/bge-reranker-v2-m3`.
+
+```powershell
+python -m src.embedding.retriever "miễn ngoại ngữ" --mode rerank --top-k 5 --candidate-k 30
+python -m src.embedding.retriever "miễn ngoại ngữ" --mode rerank-expand --top-k 5 --candidate-k 30
+```
+
+Run the retrieval checklist with reranking:
+
+```powershell
+python -m src.embedding.check_retrieval_quality --mode rerank --candidate-k 30
+python -m src.embedding.check_retrieval_quality --mode rerank-expand --candidate-k 30
+```
+
+Use it from code:
+
+```python
+from src.embedding.retriever import HybridRetriever
+
+retriever = HybridRetriever(
+    rerank_enabled=True,
+    rerank_model_name="BAAI/bge-reranker-v2-m3",
+    rerank_candidate_k=30,
+    rerank_top_k=5,
+)
+
+docs = retriever.invoke("điều kiện xét học bổng")
+```

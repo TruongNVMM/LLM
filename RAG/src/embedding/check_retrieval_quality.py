@@ -192,6 +192,27 @@ def run_case(
             category_code=category_code,
         )
         expanded = seed
+    elif mode == "rerank":
+        seed = retriever.search_with_rerank(
+            case.query,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            category_code=category_code,
+        )
+        expanded = seed
+    elif mode == "rerank-expand":
+        seed = retriever.search_with_rerank(
+            case.query,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            category_code=category_code,
+        )
+        expanded = retriever.expand_with_parent_context(
+            seed,
+            att_short_threshold=att_short_threshold,
+            body_window=body_window,
+            att_window=att_window,
+        )
     else:
         seed = retriever.search(
             case.query,
@@ -222,7 +243,7 @@ def run_case(
     for idx, result in enumerate(seed[:top_k], start=1):
         print(_format_hit(result, idx))
 
-    if mode == "expand":
+    if mode in {"expand", "rerank-expand"}:
         print(f"\nExpanded hits ({len(expanded)}):")
         for idx, result in enumerate(expanded[: max(top_k * 2, top_k)], start=1):
             print(_format_hit(result, idx))
@@ -248,7 +269,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["expand", "hybrid", "vector", "text"],
+        choices=["expand", "rerank-expand", "hybrid", "rerank", "vector", "text"],
         default="expand",
         help="Retrieval mode to run (default: expand).",
     )
