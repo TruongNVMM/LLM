@@ -168,3 +168,30 @@ retriever = HybridRetriever(
 
 docs = retriever.invoke("điều kiện xét học bổng")
 ```
+
+## RAG Chatbot (Ollama Generator)
+
+Hệ thống đã được tích hợp Chatbot CLI tương tác trực tiếp với người dùng, kết hợp Hybrid Search và LLM nội bộ (Ollama).
+
+### Yêu cầu hệ thống
+- Máy cài đặt sẵn [Ollama](https://ollama.com/)
+- Model khuyên dùng: `qwen2.5:7b` (chạy mượt trên 8GB VRAM)
+
+```powershell
+# Tải model về máy
+ollama pull qwen2.5:7b
+```
+
+### Chạy Chatbot
+
+Cấu hình mặc định sử dụng `RAG_SEARCH_MODE=rerank-expand` (hybrid search + BGE reranker + parent-child expansion) để lấy ngữ cảnh rộng nhất.
+
+```powershell
+python -m src.generator.chatbot
+```
+
+**Các lệnh trong Chatbot:**
+- `/sources`: Xem nguồn tài liệu tham khảo cho câu trả lời gần nhất.
+- `/mode <mode>`: Đổi chế độ search (`hybrid`, `rerank`, `expand`, `rerank-expand`).
+- `/clear`: Xóa màn hình.
+- `/quit` hoặc `/exit`: Thoát.
