@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RAGChainConfig:
     search_mode: str = "rerank-expand" # hybrid, rerank, expand, rerank-expand
-    top_k: int = 5
-    candidate_k: int = 30
+    top_k: int = 10
+    candidate_k: int = 60
     model: str = "qwen2.5:7b"
     base_url: str = "http://localhost:11434"
     max_context_chars: int = 6000
