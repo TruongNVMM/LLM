@@ -72,6 +72,32 @@ class QdrantManager:
         self._client = None
         self._ensure_collection(recreate=recreate)
 
+    def close(self) -> None:
+        """
+        Close the underlying Qdrant client before interpreter shutdown.
+
+        QdrantClient may emit noisy exceptions if it is left to be finalized
+        during Python teardown, so we close it explicitly while imports still
+        work.
+        """
+        client = self._client
+        self._client = None
+        if client is None:
+            return
+
+        close_fn = getattr(client, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except Exception as exc:
+                logger.debug("Ignoring Qdrant close error: %s", exc)
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
     # Client & Collection
     def _get_client(self):
         """Lấy hoặc tạo Qdrant client (lazy init)."""

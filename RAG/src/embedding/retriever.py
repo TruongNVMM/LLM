@@ -175,6 +175,21 @@ class HybridRetriever(BaseRetriever):
         object.__setattr__(self, '_reranker_model', None)
         object.__setattr__(self, '_device', None)
 
+    def close(self) -> None:
+        """Close lazily created resources before interpreter shutdown."""
+        qdrant_mgr = object.__getattribute__(self, '_qdrant_mgr')
+        if qdrant_mgr is not None:
+            try:
+                qdrant_mgr.close()
+            finally:
+                object.__setattr__(self, '_qdrant_mgr', None)
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
     @property
     def _embed_model(self):
         if object.__getattribute__(self, '_embeddings_model') is not None:
@@ -881,42 +896,45 @@ if __name__ == "__main__":
         candidate_k=args.candidate_k,
     )
 
-    print(f"\nTìm kiếm: {args.query!r}  (mode={args.mode}, top_k={args.top_k})")
+    try:
+        print(f"\nTìm kiếm: {args.query!r}  (mode={args.mode}, top_k={args.top_k})")
 
-    if args.mode == "hybrid":
-        results = retriever.search(args.query, category_code=args.category)
-    elif args.mode == "vector":
-        results = retriever.vector_search(args.query, category_code=args.category)
-    elif args.mode == "text":
-        results = retriever.text_search(args.query, category_code=args.category)
-    elif args.mode == "rerank":
-        results = retriever.search_with_rerank(
-            args.query, top_k=args.top_k, category_code=args.category
-        )
-    elif args.mode == "rerank-expand":
-        results = retriever.search_with_rerank_and_expansion(
-            args.query, top_k=args.top_k, category_code=args.category
-        )
-    else:  # expand
-        results = retriever.search_with_expansion(
-            args.query, top_k=args.top_k, category_code=args.category
-        )
-
-    if not results:
-        print("Không tìm thấy kết quả phù hợp.")
-    else:
-        for i, r in enumerate(results, 1):
-            chunk_type = r.metadata.get('chunk_type', '?')
-            print(f"\n{'='*65}")
-            print(
-                f"[{i}] RRF={r.score:.5f}  "
-                f"| type={chunk_type:10s} "
-                f"| v_rank={r.vector_rank}  t_rank={r.text_rank}"
+        if args.mode == "hybrid":
+            results = retriever.search(args.query, category_code=args.category)
+        elif args.mode == "vector":
+            results = retriever.vector_search(args.query, category_code=args.category)
+        elif args.mode == "text":
+            results = retriever.text_search(args.query, category_code=args.category)
+        elif args.mode == "rerank":
+            results = retriever.search_with_rerank(
+                args.query, top_k=args.top_k, category_code=args.category
             )
-            print(f"     Category : {r.category}")
-            print(f"     Chunk ID : {r.chunk_id}")
-            print(f"     URL      : {r.source_url}")
-            preview = r.text[:350].replace("\n", " ")
-            print(f"     Preview  : {preview}{'...' if len(r.text) > 350 else ''}")
-        print(f"\n{'='*65}")
-        print(f"Tổng kết quả: {len(results)}")
+        elif args.mode == "rerank-expand":
+            results = retriever.search_with_rerank_and_expansion(
+                args.query, top_k=args.top_k, category_code=args.category
+            )
+        else:  # expand
+            results = retriever.search_with_expansion(
+                args.query, top_k=args.top_k, category_code=args.category
+            )
+
+        if not results:
+            print("Không tìm thấy kết quả phù hợp.")
+        else:
+            for i, r in enumerate(results, 1):
+                chunk_type = r.metadata.get('chunk_type', '?')
+                print(f"\n{'='*65}")
+                print(
+                    f"[{i}] RRF={r.score:.5f}  "
+                    f"| type={chunk_type:10s} "
+                    f"| v_rank={r.vector_rank}  t_rank={r.text_rank}"
+                )
+                print(f"     Category : {r.category}")
+                print(f"     Chunk ID : {r.chunk_id}")
+                print(f"     URL      : {r.source_url}")
+                preview = r.text[:350].replace("\n", " ")
+                print(f"     Preview  : {preview}{'...' if len(r.text) > 350 else ''}")
+            print(f"\n{'='*65}")
+            print(f"Tổng kết quả: {len(results)}")
+    finally:
+        retriever.close()
